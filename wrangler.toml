@@ -1,5 +1,5 @@
 name = "edge-workers"
-main = "./shopify-cache-worker.ts"
+main = "./workers/shopify-cache-worker.ts"
 compatibility_date = "2025-09-12"
 
 [vars]
