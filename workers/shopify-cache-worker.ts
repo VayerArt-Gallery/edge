@@ -1,5 +1,5 @@
 export interface Env {
-  SHOPIFY_API_VERSION?: string; // e.g., "2025-07" (included in cache key for auto-invalidation)
+  SHOPIFY_API_VERSION?: string; // "2025-07" (included in cache key for auto-invalidation)
   CACHE_TTL?: string; // seconds, default "60"
   CACHE_SWR?: string; // seconds, default "300"
 }
