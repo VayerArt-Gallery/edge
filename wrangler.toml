@@ -1,8 +1,19 @@
 name = "edge-workers"
-main = "./workers/shopify-cache-worker.ts"
+main = "./workers/index.ts"
 compatibility_date = "2025-09-12"
+account_id = "3cee040d70875b07bcefb0760d426bde"   # add this if not present
 
 [vars]
 SHOPIFY_API_VERSION = "2025-07"
 CACHE_TTL = "60"
 CACHE_SWR = "300"
+SANITY_PROJECT_ID = "fqlwsw1s"
+SANITY_DATASET = "production"
+
+# Map routes to the same worker
+routes = [
+    # Shopify POST request cache
+    { pattern = "ag-gallery.com/api/shopify/graphql", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
+    # Sanity Connect webhook endpoint
+    { pattern = "ag-gallery.com/api/connect/sync", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" }
+]
