@@ -263,55 +263,60 @@ async function markProductsDeleted(env: Env, productIds: number[]) {
 }
 
 /**
- * Batch fetch `custom.artist` metafield for product IDs.
- * Returns a Map<number, string> of productId → artistName (raw).
+ * Fetch `custom.artist` metafield for each product ID using a per-product GraphQL query.
+ * Mirrors the GraphiQL call you confirmed works.
+ * Uses modest concurrency to stay within the 10s custom sync window.
  */
 async function fetchArtistMetafields(
   ids: number[],
   env: Env,
 ): Promise<Map<number, string>> {
+  const map = new Map<number, string>();
   const endpoint = `https://${env.SHOPIFY_STORE_DOMAIN}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`;
   const query = `
-    query($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on Product {
-          id
-          metafield(namespace: "custom", key: "artist") { value }
-        }
+    query($id: ID!) {
+      product(id: $id) {
+        id
+        metafield(namespace: "custom", key: "artist") { value }
       }
     }
   `;
-  const variables = {
-    ids: ids.map((id) => `gid://shopify/Product/${id}`),
-  };
 
-  const resp = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "X-Shopify-Access-Token": env.SHOPIFY_ADMIN_API_TOKEN,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!resp.ok) {
-    // Fail soft: return empty map so we don’t block Connect; it’ll retry
-    return new Map();
+  // process in small groups to avoid timeouts
+  const groups = chunk(ids, 8);
+  for (const group of groups) {
+    await Promise.all(
+      group.map(async (id) => {
+        try {
+          const resp = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "X-Shopify-Access-Token": env.SHOPIFY_ADMIN_API_TOKEN,
+            },
+            body: JSON.stringify({
+              query,
+              variables: { id: `gid://shopify/Product/${id}` },
+            }),
+          });
+          if (!resp.ok) return;
+          const json = (await resp.json()) as {
+            data?: {
+              product?: { metafield?: { value?: string | null } | null };
+            };
+          };
+          const val = json.data?.product?.metafield?.value?.trim();
+          if (val) map.set(id, val);
+        } catch {
+          // ignore this id; Connect will retry on future changes
+        }
+      }),
+    );
   }
 
-  const json = (await resp.json()) as {
-    data?: {
-      nodes?: { id: string; metafield?: { value?: string | null } | null }[];
-    };
-    errors?: any;
-  };
-
-  const map = new Map<number, string>();
-  json.data?.nodes?.forEach((n) => {
-    const id = extractNumericId(n?.id as string);
-    const raw = n?.metafield?.value?.trim();
-    if (id && raw) map.set(id, raw);
-  });
+  console.log(
+    `artist-meta: resolved ${map.size}/${ids.length} (per-product gql)`,
+  );
   return map;
 }
 
