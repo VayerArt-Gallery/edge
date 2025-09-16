@@ -4,9 +4,12 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250913.0",
     "@types/bun": "latest",
-    "wrangler": "^4.36.0"
+    "wrangler": "^4.37.1"
   },
   "peerDependencies": {
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@sanity/client": "^7.11.1"
   }
 }

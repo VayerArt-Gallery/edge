@@ -8,6 +8,7 @@ export interface Env {
   SHOPIFY_API_VERSION: string;
   SANITY_PROJECT_ID: string;
   SANITY_DATASET: string;
+  SANITY_SYNC_TOKEN: string;
   CACHE_TTL?: string;
   CACHE_SWR?: string;
 }

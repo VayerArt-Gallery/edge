@@ -1,42 +1,47 @@
+import { createClient } from "@sanity/client";
 import type { Env } from "../index";
 
-// Sanity Connect payload types
 export type ConnectAction = "create" | "update" | "sync" | "delete";
 
 export type ConnectProduct = {
   id: `gid://shopify/Product/${string}`;
-  // Other fields exist but not needed here
-};
-
-export type ConnectCollection = {
-  id: `gid://shopify/Collection/${string}`;
+  title: string;
+  handle: string;
+  descriptionHtml?: string;
+  featuredImage?: { src: string } | null;
+  options?: { name: string; position: number; values: string[] }[];
+  priceRange?: { minVariantPrice?: number; maxVariantPrice?: number };
+  productType?: string;
+  tags?: string[];
+  variants?: {
+    id: `gid://shopify/ProductVariant/${string}`;
+    title: string;
+    compareAtPrice?: number;
+    inventoryPolicy: string;
+    inventoryQuantity: number;
+    inventoryManagement: string;
+    image?: { src: string } | null;
+    price: string;
+    product: {
+      id: `gid://shopify/Product/${string}`;
+      status: "active" | "archived" | "draft" | "unknown";
+    };
+    selectedOptions?: { name: string; values: string }[];
+    sku?: string;
+  }[];
+  vendor?: string;
+  status: "active" | "archived" | "draft" | "unknown";
+  createdAt: string;
+  publishedAt?: string;
+  updatedAt: string;
 };
 
 export type PayloadProductsSync = {
   action: "create" | "update" | "sync";
   products: ConnectProduct[];
 };
-
-export type PayloadProductsDelete = {
-  action: "delete";
-  productIds: number[];
-};
-
-export type PayloadCollectionsSync = {
-  action: "create" | "update" | "sync";
-  collections: ConnectCollection[];
-};
-
-export type PayloadCollectionsDelete = {
-  action: "delete";
-  collectionIds: number[];
-};
-
-export type ConnectPayload =
-  | PayloadProductsSync
-  | PayloadProductsDelete
-  | PayloadCollectionsSync
-  | PayloadCollectionsDelete;
+export type PayloadProductsDelete = { action: "delete"; productIds: number[] };
+export type ConnectPayload = PayloadProductsSync | PayloadProductsDelete;
 
 // Type guards for stricter narrowing:
 export const isProductSync = (p: ConnectPayload): p is PayloadProductsSync =>
@@ -48,89 +53,14 @@ export const isProductDelete = (
 ): p is PayloadProductsDelete =>
   Array.isArray((p as any).productIds) && p.action === "delete";
 
-export async function handleConnectSync(
-  request: Request,
-  env: Env,
-  _ctx: ExecutionContext,
-) {
-  // Auth check
-  const url = new URL(request.url);
-  const provided = url.searchParams.get("secret");
-  if (!provided || provided !== env.CONNECT_SHARED_SECRET) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-
-  // Request validation
-  if (
-    request.headers.get("content-type")?.includes("application/json") !== true
-  ) {
-    return json({ error: "Unsupported content-type" }, 415);
-  }
-  const payload = await request.json<ConnectPayload>();
-  if (!payload?.action) return json({ error: "Invalid payload" }, 400);
-
-  // We only handle product create/update/sync for now
-  if (
-    !("products" in payload) ||
-    !["create", "update", "sync"].includes(payload.action)
-  ) {
-    // Acknowledge other events so Connect doesn’t retry
-    return json([], 200);
-  }
-
-  // Extract product IDs & chunk for time safety
-  // Sanity Connect allows 10s
-  const gids = payload.products.map((p) => p.id);
-  const productIds = gids.map(extractNumericId).filter(Boolean) as number[];
-  const chunks = chunk(productIds, 25); // conservative chunk size for 10s budget
-
-  const docs: any[] = [];
-  for (const ids of chunks) {
-    // Fetch metafields in batch
-    const meta = await fetchArtistMetafields(ids, env);
-
-    // For each product, normalize + resolve artist
-    const resolutions = await Promise.all(
-      ids.map(async (id) => {
-        const rawName = meta.get(id) || ""; // may be empty/undefined
-        if (!rawName) return null;
-
-        const slug = toSlug(rawName);
-        const artistId = `artist-${slug}`;
-
-        // Resolve artist (slug → name fallback). Public dataset: CDN read.
-        const existing = await findArtist(env, { slug, name: rawName });
-
-        const docsForThisProduct: any[] = [];
-
-        if (!existing) {
-          // Draft artist: name/slug only
-          docsForThisProduct.push({
-            _id: artistId,
-            _type: "artist",
-            name: rawName,
-            slug: { _type: "slug", current: slug },
-          });
-        }
-
-        // Product upsert (minimal patch)
-        docsForThisProduct.push({
-          _id: `shopifyProduct-${id}`,
-          _type: "product",
-          artist: { _type: "reference", _ref: artistId, _weak: true },
-          artistName: rawName,
-        });
-
-        return docsForThisProduct;
-      }),
-    );
-
-    // Flatten, skip nulls
-    for (const r of resolutions) if (r) docs.push(...r);
-  }
-
-  // Return docs to Connect to write
-  return json(docs, 200);
+function getSanityClient(env: Env) {
+  return createClient({
+    projectId: env.SANITY_PROJECT_ID,
+    dataset: env.SANITY_DATASET,
+    apiVersion: "2023-10-01",
+    token: env.SANITY_SYNC_TOKEN,
+    useCdn: false,
+  });
 }
 
 function json(body: unknown, status = 200) {
@@ -160,6 +90,176 @@ function toSlug(input: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function buildStoreProductDocument(p: ConnectProduct) {
+  const pid = extractNumericId(p.id)!;
+  return {
+    _id: `shopifyProduct-${pid}`,
+    _type: "product",
+    store: {
+      id: pid,
+      gid: p.id,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+      isDeleted: false,
+      descriptionHtml: p.descriptionHtml ?? "",
+      previewImageUrl: p.featuredImage?.src ?? "",
+      priceRange: {
+        minVariantPrice: p.priceRange?.minVariantPrice ?? undefined,
+        maxVariantPrice: p.priceRange?.maxVariantPrice ?? undefined,
+      },
+      productType: p.productType ?? "",
+      slug: { _type: "slug", current: p.handle },
+      status: p.status,
+      tags: (p.tags ?? []).join(","),
+      title: p.title,
+      vendor: p.vendor ?? "",
+      options: (p.options ?? []).map((o) => ({
+        _key: o.name,
+        _type: "option",
+        name: o.name,
+        values: o.values ?? [],
+      })),
+      variants: (p.variants ?? []).map((v) => ({
+        _type: "reference",
+        _ref: `shopifyProductVariant-${extractNumericId(v.id)}`,
+        _weak: true,
+        _key: extractNumericId(v.id)?.toString(),
+      })),
+    },
+  };
+}
+
+function buildVariantDocuments(p: ConnectProduct) {
+  const pid = extractNumericId(p.id)!;
+  return (p.variants ?? []).map((v) => {
+    const vid = extractNumericId(v.id)!;
+    const inStock = v.inventoryManagement
+      ? v.inventoryPolicy.toLowerCase() === "continue" ||
+        (v.inventoryQuantity ?? 0) > 0
+      : true;
+    const optVals = (v.selectedOptions ?? []).map((o) => o.values);
+    const [option1, option2, option3] = [
+      optVals[0] ?? "",
+      optVals[1] ?? "",
+      optVals[2] ?? "",
+    ];
+    return {
+      _id: `shopifyProductVariant-${vid}`,
+      _type: "productVariant",
+      store: {
+        id: vid,
+        gid: v.id,
+        createdAt: p.createdAt, // variant.createdAt not present; acceptable
+        productId: pid,
+        productGid: p.id,
+        title: v.title,
+        price: Number(v.price ?? 0),
+        compareAtPrice: Number(v.compareAtPrice ?? 0),
+        previewImageUrl: v.image?.src ?? "",
+        sku: v.sku ?? "",
+        status: v.product.status,
+        inventory: {
+          isAvailable: inStock,
+          management: v.inventoryManagement?.toUpperCase() || "SHOPIFY",
+          policy: v.inventoryPolicy?.toUpperCase() || "DENY",
+        },
+        option1,
+        option2,
+        option3,
+      },
+    };
+  });
+}
+
+async function commitUpserts(
+  env: Env,
+  products: ConnectProduct[],
+  metaById: Map<number, string>,
+) {
+  const sanity = getSanityClient(env);
+
+  // detect existing product drafts to mirror default behavior
+  const productIds = products.map(
+    (p) => `shopifyProduct-${extractNumericId(p.id)}`,
+  );
+  const draftIds = productIds.map((id) => `drafts.${id}`);
+  const existingDrafts: string[] = await sanity.fetch(`*[_id in $ids]._id`, {
+    ids: draftIds,
+  });
+
+  // small de-dupe for artist drafts
+  const artistDraftsCreated = new Set<string>();
+
+  const tx = sanity.transaction();
+
+  for (const p of products) {
+    const pid = extractNumericId(p.id)!;
+    const baseDoc = buildStoreProductDocument(p);
+
+    // ----- Artist enrichment (only when metafield present) -----
+    const rawName = metaById.get(pid);
+    if (rawName) {
+      const slug = toSlug(rawName);
+      const artistPubId = `artist-${slug}`;
+      // published lookup via CDN (fast); if not found, create a DRAFT
+      const existing = await findArtist(env, { slug, name: rawName });
+      if (!existing && !artistDraftsCreated.has(slug)) {
+        tx.createIfNotExists({
+          _id: `drafts.${artistPubId}`,
+          _type: "artist",
+          name: rawName,
+          slug: { _type: "slug", current: slug },
+        });
+        artistDraftsCreated.add(slug);
+      }
+      (baseDoc as any).artistName = rawName;
+      (baseDoc as any).artist = {
+        _type: "reference",
+        _ref: artistPubId,
+        _weak: true,
+      };
+    }
+
+    // ----- Product (published) -----
+    tx.createIfNotExists({ _id: baseDoc._id, _type: baseDoc._type });
+    tx.patch(baseDoc._id, (p) => p.set(baseDoc));
+
+    // ----- Product (draft) if exists -----
+    const draftId = `drafts.${baseDoc._id}`;
+    if (existingDrafts.includes(draftId)) {
+      tx.patch(draftId, (p) => p.set({ ...baseDoc, _id: draftId }));
+    }
+
+    // ----- Variants (published) -----
+    const variantDocs = buildVariantDocuments(p);
+    for (const v of variantDocs) {
+      tx.createIfNotExists({ _id: v._id, _type: v._type });
+      tx.patch(v._id, (p) => p.set(v));
+    }
+  }
+
+  await tx.commit();
+}
+
+async function markProductsDeleted(env: Env, productIds: number[]) {
+  const sanity = getSanityClient(env);
+  // Patch only existing docs (avoid creating on delete)
+  const ids = productIds.map((n) => `shopifyProduct-${n}`);
+  const existing: string[] = await sanity.fetch(`*[_id in $ids]._id`, { ids });
+  const drafts: string[] = await sanity.fetch(`*[_id in $ids]._id`, {
+    ids: ids.map((id) => `drafts.${id}`),
+  });
+
+  const tx = sanity.transaction();
+  for (const id of existing) {
+    tx.patch(id, (p) => p.set({ store: { isDeleted: true } }));
+  }
+  for (const id of drafts) {
+    tx.patch(id, (p) => p.set({ store: { isDeleted: true } }));
+  }
+  if (existing.length + drafts.length > 0) await tx.commit();
 }
 
 /**
@@ -250,4 +350,68 @@ async function findArtist(
   }
 
   return null;
+}
+
+export async function handleConnectSync(
+  request: Request,
+  env: Env,
+  _ctx: ExecutionContext,
+) {
+  // ---- Auth via URL secret ----
+  const url = new URL(request.url);
+  const provided = url.searchParams.get("secret");
+  if (!provided || provided !== env.CONNECT_SHARED_SECRET) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  // ---- Basic validation ----
+  if (!request.headers.get("content-type")?.includes("application/json")) {
+    return json({ error: "Unsupported content-type" }, 415);
+  }
+
+  let payload: ConnectPayload;
+  try {
+    payload = await request.json<ConnectPayload>();
+  } catch {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+
+  // ---- Product create/update/sync (self-write to Sanity) ----
+  if (
+    "products" in payload &&
+    (payload.action === "create" ||
+      payload.action === "update" ||
+      payload.action === "sync")
+  ) {
+    const prods = payload.products;
+    if (!Array.isArray(prods) || prods.length === 0) {
+      return json({ message: "OK" }, 200);
+    }
+
+    // Chunk by product IDs to stay well under 10s
+    const ids = prods.map((p) => extractNumericId(p.id)!).filter(Boolean);
+    const batches = chunk(ids, 25);
+
+    for (const batch of batches) {
+      // Get custom.artist metafields for this batch
+      const meta = await fetchArtistMetafields(batch, env); // Map<number,string>
+      const subset = prods.filter((p) =>
+        batch.includes(extractNumericId(p.id)!),
+      );
+
+      // Upsert product + variant docs, and add artist fields if present
+      await commitUpserts(env, subset, meta);
+    }
+
+    return json({ message: "OK" }, 200);
+  }
+
+  // ---- Product delete ----
+  if ("productIds" in payload && payload.action === "delete") {
+    await markProductsDeleted(env, payload.productIds);
+    return json({ message: "OK" }, 200);
+  }
+
+  // ---- Other payloads (collections etc.) acknowledged for now ----
+  return json({ message: "OK" }, 200);
 }

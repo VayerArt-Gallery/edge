@@ -17,3 +17,7 @@ routes = [
     # Sanity Connect webhook endpoint
     { pattern = "ag-gallery.com/api/connect/sync", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" }
 ]
+
+# wrangler.toml (wrangler v3.88.0^)
+[observability.logs]
+enabled = true
