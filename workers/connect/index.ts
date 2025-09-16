@@ -92,6 +92,10 @@ function toSlug(input: string) {
     .replace(/^-|-$/g, "");
 }
 
+function normalizeName(input: string) {
+  return input.normalize("NFKC").replace(/\s+/g, " ").trim();
+}
+
 function buildStoreProductDocument(p: ConnectProduct) {
   const pid = extractNumericId(p.id)!;
   return {
@@ -115,8 +119,8 @@ function buildStoreProductDocument(p: ConnectProduct) {
       tags: (p.tags ?? []).join(","),
       title: p.title,
       vendor: p.vendor ?? "",
-      options: (p.options ?? []).map((o) => ({
-        _key: o.name,
+      options: (p.options ?? []).map((o, idx) => ({
+        _key: `${idx}-${o.name}`,
         _type: "option",
         name: o.name,
         values: o.values ?? [],
@@ -189,10 +193,8 @@ async function commitUpserts(
     ids: draftIds,
   });
 
-  // small de-dupe for artist drafts
-  const artistDraftsCreated = new Set<string>();
-
   const tx = sanity.transaction();
+  const artistCache = new Map<string, { _id: string }>(); // key: slug
 
   for (const p of products) {
     const pid = extractNumericId(p.id)!;
@@ -201,35 +203,69 @@ async function commitUpserts(
     // ----- Artist enrichment (only when metafield present) -----
     const rawName = metaById.get(pid);
     if (rawName) {
-      const slug = toSlug(rawName);
+      const cleanName = normalizeName(rawName);
+      const slug = toSlug(cleanName);
       const artistPubId = `artist-${slug}`;
-      // published lookup via CDN (fast); if not found, create a DRAFT
-      const existing = await findArtist(env, { slug, name: rawName });
-      if (!existing && !artistDraftsCreated.has(slug)) {
+      const cached = artistCache.get(slug);
+      const existing =
+        cached ?? (await findArtist(env, { slug, name: cleanName }));
+      if (!cached && existing?._id) {
+        artistCache.set(slug, { _id: existing._id });
+      }
+
+      // Always store the human-readable name too
+      (baseDoc as any).artistName = cleanName;
+
+      if (existing?._id) {
+        // Reference the actual existing artist document (whatever its _id is)
+        (baseDoc as any).artist = {
+          _type: "reference",
+          _ref: existing._id,
+          _weak: true,
+        };
+      } else {
+        // Create a published artist doc with a predictable id, then reference it
         tx.createIfNotExists({
-          _id: `drafts.${artistPubId}`,
+          _id: artistPubId,
           _type: "artist",
           name: rawName,
           slug: { _type: "slug", current: slug },
         });
-        artistDraftsCreated.add(slug);
+        (baseDoc as any).artist = {
+          _type: "reference",
+          _ref: artistPubId,
+          _weak: true,
+        };
       }
-      (baseDoc as any).artistName = rawName;
-      (baseDoc as any).artist = {
-        _type: "reference",
-        _ref: artistPubId,
-        _weak: true,
-      };
     }
 
     // ----- Product (published) -----
     tx.createIfNotExists({ _id: baseDoc._id, _type: baseDoc._type });
-    tx.patch(baseDoc._id, (p) => p.set(baseDoc));
+    tx.patch(baseDoc._id, (p) =>
+      p.set({
+        store: baseDoc.store,
+        ...((baseDoc as any).artistName
+          ? { artistName: (baseDoc as any).artistName }
+          : {}),
+        ...((baseDoc as any).artist ? { artist: (baseDoc as any).artist } : {}),
+      }),
+    );
 
     // ----- Product (draft) if exists -----
     const draftId = `drafts.${baseDoc._id}`;
     if (existingDrafts.includes(draftId)) {
-      tx.patch(draftId, (p) => p.set({ ...baseDoc, _id: draftId }));
+      tx.patch(draftId, (p) =>
+        p.set({
+          store: baseDoc.store,
+          ...((baseDoc as any).artistName
+            ? { artistName: (baseDoc as any).artistName }
+            : {}),
+          ...((baseDoc as any).artist
+            ? { artist: (baseDoc as any).artist }
+            : {}),
+          _id: draftId,
+        }),
+      );
     }
 
     // ----- Variants (published) -----
@@ -254,10 +290,10 @@ async function markProductsDeleted(env: Env, productIds: number[]) {
 
   const tx = sanity.transaction();
   for (const id of existing) {
-    tx.patch(id, (p) => p.set({ store: { isDeleted: true } }));
+    tx.patch(id, (p) => p.set({ "store.isDeleted": true }));
   }
   for (const id of drafts) {
-    tx.patch(id, (p) => p.set({ store: { isDeleted: true } }));
+    tx.patch(id, (p) => p.set({ "store.isDeleted": true }));
   }
   if (existing.length + drafts.length > 0) await tx.commit();
 }
@@ -272,6 +308,11 @@ async function fetchArtistMetafields(
   env: Env,
 ): Promise<Map<number, string>> {
   const map = new Map<number, string>();
+  if (!ids.length) return map;
+  if (!env.SHOPIFY_STORE_DOMAIN || !env.SHOPIFY_ADMIN_API_TOKEN) {
+    console.warn("artist-meta: missing SHOPIFY envs; skipping");
+    return map;
+  }
   const endpoint = `https://${env.SHOPIFY_STORE_DOMAIN}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`;
   const query = `
     query($id: ID!) {
@@ -288,8 +329,11 @@ async function fetchArtistMetafields(
     await Promise.all(
       group.map(async (id) => {
         try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort("timeout"), 3500); // keep total < 10s
           const resp = await fetch(endpoint, {
             method: "POST",
+            redirect: "follow",
             headers: {
               "content-type": "application/json",
               "X-Shopify-Access-Token": env.SHOPIFY_ADMIN_API_TOKEN,
@@ -298,13 +342,27 @@ async function fetchArtistMetafields(
               query,
               variables: { id: `gid://shopify/Product/${id}` },
             }),
+            signal: ctrl.signal,
           });
-          if (!resp.ok) return;
+          clearTimeout(t);
+
+          if (!resp.ok) {
+            const peek = (await resp.text()).slice(0, 180);
+            console.warn("artist-meta: non-200", {
+              status: resp.status,
+              host: new URL(endpoint).host,
+              id,
+              peek,
+            });
+            return;
+          }
+
           const json = (await resp.json()) as {
             data?: {
               product?: { metafield?: { value?: string | null } | null };
             };
           };
+
           const val = json.data?.product?.metafield?.value?.trim();
           if (val) map.set(id, val);
         } catch {
@@ -315,46 +373,23 @@ async function fetchArtistMetafields(
   }
 
   console.log(
-    `artist-meta: resolved ${map.size}/${ids.length} (per-product gql)`,
+    `artist-meta: resolved ${map.size}/${ids.length} (host=${env.SHOPIFY_STORE_DOMAIN})`,
   );
   return map;
 }
 
 /**
  * Resolve an artist by slug first, falling back to case-insensitive name.
- * Uses public-read CDN
  */
 async function findArtist(
   env: Env,
   { slug, name }: { slug: string; name: string },
 ) {
-  const base = `https://${env.SANITY_PROJECT_ID}.apicdn.sanity.io/v2023-10-01/data/query/${env.SANITY_DATASET}`;
-
-  // Slug match
-  const q1 = encodeURIComponent(
-    `*[_type=="artist" && slug.current == $s][0]{_id}`,
-  );
-  let resp = await fetch(`${base}?query=${q1}&$s=${encodeURIComponent(slug)}`);
-  if (resp.ok) {
-    const { result } = (await resp.json()) as {
-      result: { _id: string } | null;
-    };
-    if (result?._id) return result;
-  }
-
-  // Name match (case-insensitive)
-  const q2 = encodeURIComponent(
-    `*[_type=="artist" && lower(name) == lower($n)][0]{_id}`,
-  );
-  resp = await fetch(`${base}?query=${q2}&$n=${encodeURIComponent(name)}`);
-  if (resp.ok) {
-    const { result } = (await resp.json()) as {
-      result: { _id: string } | null;
-    };
-    if (result?._id) return result;
-  }
-
-  return null;
+  const sanity = getSanityClient(env);
+  const query = `*[_type=="artist" && (slug.current == $slug || lower(name) == lower($name))][0]{_id}`;
+  const params = { slug, name };
+  const result = await sanity.fetch<{ _id?: string } | null>(query, params);
+  return result && result._id ? result : null;
 }
 
 export async function handleConnectSync(
