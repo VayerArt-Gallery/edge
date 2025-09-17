@@ -25,7 +25,7 @@ import {
 export async function handleConnectSync(
   request: Request,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
 ) {
   // Method guard
   if (request.method !== "POST") {
@@ -60,82 +60,26 @@ export async function handleConnectSync(
     return json({ error: "Invalid JSON" }, 400);
   }
 
-  // Product create/update/sync
+  // Product create/update/sync — process in background to avoid timeouts
   if (isProductSync(payload)) {
     const prods = Array.isArray(payload.products) ? payload.products : [];
-    if (prods.length === 0) return json({ message: "OK" });
-
-    // Batch product IDs to keep runtime within Connect’s window
-    const ids = prods.map((p) => extractNumericId(p.id)!).filter(Boolean);
-    const productById = new Map<number, ConnectProduct>();
-    for (const p of prods) {
-      const id = extractNumericId(p.id);
-      if (id != null) productById.set(id, p);
+    if (prods.length > 0) {
+      ctx.waitUntil(
+        processSyncProducts(env, prods).catch((e) =>
+          console.warn("processSyncProducts failed", String(e)),
+        ),
+      );
     }
-    const batches = chunk(ids, 25);
-
-    for (const batch of batches) {
-      // Fetch artist metafields in one request per chunk using nodes()
-      const meta = await fetchArtistMetafields(batch, env); // Map<number,string>
-
-      // Pre-ensure unique artist documents to reduce redundant createIfNotExists writes.
-      const ensuredArtistIds = new Set<string>();
-      const uniqueArtists: Array<{ _id: string; name: string; slug: string }> = [];
-      for (const name of new Set(Array.from(meta.values()))) {
-        const _id = `artist-${numericId14FromString(name)}`;
-        const slug = toSlug(name);
-        if (!ensuredArtistIds.has(_id)) {
-          ensuredArtistIds.add(_id);
-          uniqueArtists.push({ _id, name, slug });
-        }
-      }
-      if (uniqueArtists.length) {
-        const sanity = getSanityClient(env);
-        const preTx = sanity.transaction();
-        for (const a of uniqueArtists) {
-          preTx.createIfNotExists({
-            _id: a._id,
-            _type: "artist",
-            name: a.name,
-            slug: { _type: "slug", current: a.slug },
-          });
-        }
-        try {
-          await preTx.commit();
-        } catch {
-          // If this pre-ensure fails, the per-product upserts still create lazily.
-          ensuredArtistIds.clear();
-        }
-      }
-
-      // Create per-product tasks to upsert with limited concurrency to avoid pressure.
-      const tasks: Array<() => Promise<unknown>> = [];
-      for (const pid of batch) {
-        const p = productById.get(pid);
-        if (!p) continue;
-        tasks.push(async () => {
-          try {
-            await commitUpsertsForProduct(env, p, meta, ensuredArtistIds);
-          } catch (e) {
-            console.warn("commitUpsertsForProduct failed", { pid, err: String(e) });
-          }
-        });
-      }
-
-      // Run up to 3 concurrent upserts to balance latency and resource limits.
-      await runWithConcurrency(tasks, 3);
-    }
-
     return json({ message: "OK" });
   }
 
-  // Product delete
+  // Product delete — process in background as well
   if (isProductDelete(payload)) {
-    try {
-      await markProductsDeleted(env, payload.productIds);
-    } catch (e) {
-      console.warn("markProductsDeleted failed", { err: String(e) });
-    }
+    ctx.waitUntil(
+      markProductsDeleted(env, payload.productIds).catch((e) =>
+        console.warn("markProductsDeleted failed", String(e)),
+      ),
+    );
     return json({ message: "OK" });
   }
 
@@ -143,3 +87,69 @@ export async function handleConnectSync(
   return json({ message: "OK" });
 }
 
+/**
+ * Process product sync payload in batches, with per-batch metafield fetch and
+ * limited concurrency upserts. Intended to run via ctx.waitUntil.
+ */
+async function processSyncProducts(env: Env, prods: ConnectProduct[]) {
+  // Batch product IDs to keep runtime within Connect’s window
+  const ids = prods.map((p) => extractNumericId(p.id)!).filter(Boolean);
+  const productById = new Map<number, ConnectProduct>();
+  for (const p of prods) {
+    const id = extractNumericId(p.id);
+    if (id != null) productById.set(id, p);
+  }
+  const batches = chunk(ids, 25);
+
+  for (const batch of batches) {
+    // Fetch artist metafields in one request per chunk using nodes()
+    const meta = await fetchArtistMetafields(batch, env); // Map<number,string>
+
+    // Pre-ensure unique artist documents to reduce redundant createIfNotExists writes.
+    const ensuredArtistIds = new Set<string>();
+    const uniqueArtists: Array<{ _id: string; name: string; slug: string }> = [];
+    for (const name of new Set(Array.from(meta.values()))) {
+      const _id = `artist-${numericId14FromString(name)}`;
+      const slug = toSlug(name);
+      if (!ensuredArtistIds.has(_id)) {
+        ensuredArtistIds.add(_id);
+        uniqueArtists.push({ _id, name, slug });
+      }
+    }
+    if (uniqueArtists.length) {
+      const sanity = getSanityClient(env);
+      const preTx = sanity.transaction();
+      for (const a of uniqueArtists) {
+        preTx.createIfNotExists({
+          _id: a._id,
+          _type: "artist",
+          name: a.name,
+          slug: { _type: "slug", current: a.slug },
+        });
+      }
+      try {
+        await preTx.commit();
+      } catch {
+        // If this pre-ensure fails, the per-product upserts still create lazily.
+        ensuredArtistIds.clear();
+      }
+    }
+
+    // Create per-product tasks to upsert with limited concurrency to avoid pressure.
+    const tasks: Array<() => Promise<unknown>> = [];
+    for (const pid of batch) {
+      const p = productById.get(pid);
+      if (!p) continue;
+      tasks.push(async () => {
+        try {
+          await commitUpsertsForProduct(env, p, meta, ensuredArtistIds);
+        } catch (e) {
+          console.warn("commitUpsertsForProduct failed", { pid, err: String(e) });
+        }
+      });
+    }
+
+    // Run up to 3 concurrent upserts to balance latency and resource limits.
+    await runWithConcurrency(tasks, 3);
+  }
+}
