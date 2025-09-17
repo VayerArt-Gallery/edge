@@ -46,11 +46,9 @@ export type ConnectPayload = PayloadProductsSync | PayloadProductsDelete;
 // ---- Type guards -----------------------------------------------------------
 
 export const isProductSync = (p: ConnectPayload): p is PayloadProductsSync =>
-  (p as any).products &&
+  "products" in p &&
   (p.action === "create" || p.action === "update" || p.action === "sync");
 
 export const isProductDelete = (
   p: ConnectPayload,
-): p is PayloadProductsDelete =>
-  Array.isArray((p as any).productIds) && p.action === "delete";
-
+): p is PayloadProductsDelete => "productIds" in p && Array.isArray(p.productIds) && p.action === "delete";

@@ -59,8 +59,7 @@ export async function handleShopifyCache(
     "cursor",
   ] as const;
   const keyVars: Record<string, unknown> = {};
-  for (const k of allowedKeys)
-    if (k in variables) keyVars[k] = (variables as any)[k];
+  for (const k of allowedKeys) if (k in variables) keyVars[k] = variables[k];
 
   const apiVersion = env.SHOPIFY_API_VERSION || "2025-07";
   const keyPayload = JSON.stringify({ opName, apiVersion, v: keyVars });

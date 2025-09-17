@@ -1,7 +1,7 @@
 import type { Env } from "../../types/env";
 import type { ConnectPayload, ConnectProduct } from "../../types/connect";
 import { isProductDelete, isProductSync } from "../../types/connect";
-import { fetchArtistMetafields } from "../../lib/shopify/metafields";
+import { fetchProductMetafields } from "../../lib/shopify/metafields";
 import { getSanityClient } from "../../lib/sanity/client";
 import { commitUpsertsForProduct, markProductsDeleted } from "../../lib/sanity/persist";
 import {
@@ -102,13 +102,15 @@ async function processSyncProducts(env: Env, prods: ConnectProduct[]) {
   const batches = chunk(ids, 25);
 
   for (const batch of batches) {
-    // Fetch artist metafields in one request per chunk using nodes()
-    const meta = await fetchArtistMetafields(batch, env); // Map<number,string>
+    // Fetch product metafields in one request per chunk using nodes()
+    const metaById = await fetchProductMetafields(batch, env); // Map<number, { ... }>
 
     // Pre-ensure unique artist documents to reduce redundant createIfNotExists writes.
     const ensuredArtistIds = new Set<string>();
     const uniqueArtists: Array<{ _id: string; name: string; slug: string }> = [];
-    for (const name of new Set(Array.from(meta.values()))) {
+    for (const meta of metaById.values()) {
+      const name = meta.artist?.trim();
+      if (!name) continue;
       const _id = `artist-${numericId14FromString(name)}`;
       const slug = toSlug(name);
       if (!ensuredArtistIds.has(_id)) {
@@ -142,7 +144,7 @@ async function processSyncProducts(env: Env, prods: ConnectProduct[]) {
       if (!p) continue;
       tasks.push(async () => {
         try {
-          await commitUpsertsForProduct(env, p, meta, ensuredArtistIds);
+          await commitUpsertsForProduct(env, p, metaById, ensuredArtistIds);
         } catch (e) {
           console.warn("commitUpsertsForProduct failed", { pid, err: String(e) });
         }

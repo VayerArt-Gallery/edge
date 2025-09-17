@@ -1,7 +1,13 @@
 import type { Env } from "../../types/env";
 import type { ConnectProduct } from "../../types/connect";
+import type { ProductMetafields } from "../shopify/metafields";
 import { getSanityClient } from "./client";
-import { buildProductPatch, buildStoreProductDocument, buildVariantDocs } from "./builders";
+import {
+  buildProductPatch,
+  buildStoreProductDocument,
+  buildVariantDocs,
+  type ProductDocWithEnrichment,
+} from "./builders";
 import { numericId14FromString, toSlug, extractNumericId } from "../utils";
 
 /**
@@ -13,21 +19,22 @@ import { numericId14FromString, toSlug, extractNumericId } from "../utils";
 export async function commitUpsertsForProduct(
   env: Env,
   product: ConnectProduct,
-  artistNameById: Map<number, string>,
+  metaById: Map<number, ProductMetafields>,
   ensuredArtistIds: Set<string>,
 ) {
   const sanity = getSanityClient(env);
   const tx = sanity.transaction();
 
   const pid = extractNumericId(product.id)!;
-  const baseDoc = buildStoreProductDocument(product);
+  const baseDoc: ProductDocWithEnrichment = buildStoreProductDocument(product);
 
-  // ----- Artist enrichment (optional) -----
-  const artistName = artistNameById.get(pid);
+  // ----- Artist enrichment -----
+  const meta = metaById.get(pid);
+  const artistName = meta?.artist;
   if (artistName) {
     const slug = toSlug(artistName);
     const artistPubId = `artist-${numericId14FromString(artistName)}`;
-    (baseDoc as any).artistName = artistName;
+    baseDoc.artistName = artistName;
     if (!ensuredArtistIds.has(artistPubId)) {
       tx.createIfNotExists({
         _id: artistPubId,
@@ -37,12 +44,19 @@ export async function commitUpsertsForProduct(
       });
       ensuredArtistIds.add(artistPubId);
     }
-    (baseDoc as any).artist = {
+    baseDoc.artist = {
       _type: "reference",
       _ref: artistPubId,
       _weak: true,
     };
   }
+
+  // ----- Additional metafields mapping -----
+  if (meta?.artMovement) baseDoc.artMovement = meta.artMovement;
+  if (meta?.theme) baseDoc.theme = meta.theme;
+  if (meta?.medium) baseDoc.medium = meta.medium;
+  if (meta?.dimensionsGlobal) baseDoc.dimensionsMetric = meta.dimensionsGlobal;
+  if (meta?.dimensionsUs) baseDoc.dimensionsImperial = meta.dimensionsUs;
 
   // ----- Product (published) -----
   tx.createIfNotExists({ _id: baseDoc._id, _type: baseDoc._type });
@@ -50,7 +64,9 @@ export async function commitUpsertsForProduct(
 
   // ----- Product (draft) if exists -----
   const draftId = `drafts.${baseDoc._id}`;
-  const hasDraft: string[] = await sanity.fetch(`*[_id==$id]._id`, { id: draftId });
+  const hasDraft: string[] = await sanity.fetch(`*[_id==$id]._id`, {
+    id: draftId,
+  });
   if (hasDraft.length) {
     tx.patch(draftId, (p) => p.set(buildProductPatch(baseDoc)));
   }
@@ -63,13 +79,16 @@ export async function commitUpsertsForProduct(
   }
 
   // Soft-delete variants that no longer exist for this product
-  const currentIds = new Set(variantDocs.map((v) => Number(String(v.store.id))));
+  const currentIds = new Set(
+    variantDocs.map((v) => Number(String(v.store.id))),
+  );
   const existingVariantIds: { _id: string; id: number }[] = await sanity.fetch(
     `*[_type=="productVariant" && store.productId==$pid]{_id, "id": store.id}`,
     { pid },
   );
   const missing = existingVariantIds.filter((e) => !currentIds.has(e.id));
-  for (const m of missing) tx.patch(m._id, (p) => p.set({ "store.isDeleted": true }));
+  for (const m of missing)
+    tx.patch(m._id, (p) => p.set({ "store.isDeleted": true }));
 
   await tx.commit();
 }
@@ -81,16 +100,20 @@ export async function markProductsDeleted(env: Env, productIds: number[]) {
   const ids = productIds.map((n) => `shopifyProduct-${n}`);
   const drafts = ids.map((id) => `drafts.${id}`);
   const existing: string[] = await sanity.fetch(`*[_id in $ids]._id`, { ids });
-  const existingDrafts: string[] = await sanity.fetch(`*[_id in $ids]._id`, { ids: drafts });
+  const existingDrafts: string[] = await sanity.fetch(`*[_id in $ids]._id`, {
+    ids: drafts,
+  });
   const variantIds: string[] = await sanity.fetch(
     `*[_type=="productVariant" && store.productId in $pids]._id`,
     { pids: productIds },
   );
   if (!existing.length && !existingDrafts.length && !variantIds.length) return;
   const tx = sanity.transaction();
-  for (const id of existing) tx.patch(id, (p) => p.set({ "store.isDeleted": true }));
-  for (const id of existingDrafts) tx.patch(id, (p) => p.set({ "store.isDeleted": true }));
-  for (const vid of variantIds) tx.patch(vid, (p) => p.set({ "store.isDeleted": true }));
+  for (const id of existing)
+    tx.patch(id, (p) => p.set({ "store.isDeleted": true }));
+  for (const id of existingDrafts)
+    tx.patch(id, (p) => p.set({ "store.isDeleted": true }));
+  for (const vid of variantIds)
+    tx.patch(vid, (p) => p.set({ "store.isDeleted": true }));
   await tx.commit();
 }
-

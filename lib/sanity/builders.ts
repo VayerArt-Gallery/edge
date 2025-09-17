@@ -1,8 +1,23 @@
 import type { ConnectProduct } from "../../types/connect";
 import { extractNumericId, stableKeyFrom } from "../utils";
 
+export interface ProductDocWithEnrichment {
+  _id: string;
+  _type: "product";
+  // We don't need strong typing for `store` here because we pass it through
+  // as-is to patches; keep it flexible and focused on fields we enrich.
+  store: Record<string, unknown>;
+  artistName?: string;
+  artist?: { _type: "reference"; _ref: string; _weak?: true };
+  artMovement?: string;
+  theme?: string;
+  medium?: string;
+  dimensionsMetric?: string;
+  dimensionsImperial?: string;
+}
+
 /** Build the published product document skeleton to upsert into Sanity. */
-export function buildStoreProductDocument(p: ConnectProduct) {
+export function buildStoreProductDocument(p: ConnectProduct): ProductDocWithEnrichment {
   const pid = extractNumericId(p.id);
   if (pid == null) throw new Error(`Bad product GID: ${p.id}`);
 
@@ -100,13 +115,15 @@ export function buildVariantDocs(p: ConnectProduct) {
 }
 
 /** Build the product patch body (shared between published and draft ids). */
-export function buildProductPatch(
-  baseDoc: ReturnType<typeof buildStoreProductDocument>,
-) {
+export function buildProductPatch(baseDoc: ProductDocWithEnrichment) {
   const body: Record<string, unknown> = { store: baseDoc.store };
-  if ((baseDoc as any).artistName)
-    body["artistName"] = (baseDoc as any).artistName;
-  if ((baseDoc as any).artist) body["artist"] = (baseDoc as any).artist;
+  if (baseDoc.artistName) body["artistName"] = baseDoc.artistName;
+  if (baseDoc.artist) body["artist"] = baseDoc.artist;
+  if (baseDoc.artMovement) body["artMovement"] = baseDoc.artMovement;
+  if (baseDoc.theme) body["theme"] = baseDoc.theme;
+  if (baseDoc.medium) body["medium"] = baseDoc.medium;
+  if (baseDoc.dimensionsMetric) body["dimensionsMetric"] = baseDoc.dimensionsMetric;
+  if (baseDoc.dimensionsImperial)
+    body["dimensionsImperial"] = baseDoc.dimensionsImperial;
   return body;
 }
-

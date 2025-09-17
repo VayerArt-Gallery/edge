@@ -5,14 +5,27 @@ import { chunk, extractNumericId } from "../utils";
  * Fetch the custom/artist metafield values for a set of product IDs using Shopify's nodes API.
  * Returns a map productId -> exact artist name.
  */
-export async function fetchArtistMetafields(
+export type ProductMetafields = {
+  artist?: string;
+  artMovement?: string;
+  theme?: string;
+  medium?: string;
+  dimensionsGlobal?: string;
+  dimensionsUs?: string;
+};
+
+/**
+ * Fetch multiple metafields for a set of product IDs using Shopify's nodes API.
+ * Returns a map productId -> metafields object.
+ */
+export async function fetchProductMetafields(
   ids: number[],
   env: Env,
-): Promise<Map<number, string>> {
-  const map = new Map<number, string>();
+): Promise<Map<number, ProductMetafields>> {
+  const map = new Map<number, ProductMetafields>();
   if (!ids.length) return map;
   if (!env.SHOPIFY_STORE_DOMAIN || !env.SHOPIFY_ADMIN_API_TOKEN) {
-    console.warn("artist-meta: missing SHOPIFY envs; skipping");
+    console.warn("product-meta: missing SHOPIFY envs; skipping");
     return map;
   }
   const endpoint = `https://${env.SHOPIFY_STORE_DOMAIN}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`;
@@ -21,7 +34,12 @@ export async function fetchArtistMetafields(
       nodes(ids: $ids) {
         id
         ... on Product {
-          metafield(namespace: "custom", key: "artist") { value }
+          artist: metafield(namespace: "custom", key: "artist") { value }
+          artMovement: metafield(namespace: "shopify", key: "art-movement") { value }
+          theme: metafield(namespace: "shopify", key: "theme") { value }
+          medium: metafield(namespace: "custom", key: "medium") { value }
+          dimensionsGlobal: metafield(namespace: "custom", key: "dimensions_global") { value }
+          dimensionsUs: metafield(namespace: "custom", key: "dimensions_us") { value }
         }
       }
     }
@@ -47,7 +65,7 @@ export async function fetchArtistMetafields(
       clearTimeout(t);
       if (!resp.ok) {
         const peek = (await resp.text()).slice(0, 180);
-        console.warn("artist-meta: non-200", {
+        console.warn("product-meta: non-200", {
           status: resp.status,
           host: new URL(endpoint).host,
           count: group.length,
@@ -55,28 +73,58 @@ export async function fetchArtistMetafields(
         });
         continue;
       }
-      const json = (await resp.json()) as {
-        data?: {
-          nodes?: Array<{
-            id?: string;
-            metafield?: { value?: string | null } | null;
-          } | null>;
-        };
+      type ProductNode = {
+        id?: string;
+        artist?: { value?: string | null } | null;
+        artMovement?: { value?: string | null } | null;
+        theme?: { value?: string | null } | null;
+        medium?: { value?: string | null } | null;
+        dimensionsGlobal?: { value?: string | null } | null;
+        dimensionsUs?: { value?: string | null } | null;
       };
-      const nodes = json.data?.nodes ?? [];
+      const json = (await resp.json()) as {
+        data?: { nodes?: Array<ProductNode | null> };
+      };
+      const nodes: Array<ProductNode | null> = json.data?.nodes ?? [];
       for (const node of nodes) {
         if (!node?.id) continue;
         const pid = extractNumericId(node.id);
-        const val = (node as any).metafield?.value?.trim();
-        if (pid && val) map.set(pid, val);
+        if (!pid) continue;
+        const mf: ProductMetafields = {};
+        const get = (f?: { value?: string | null } | null) => f?.value?.trim();
+        const artist = get(node.artist);
+        const artMovement = get(node.artMovement);
+        const theme = get(node.theme);
+        const medium = get(node.medium);
+        const dimensionsGlobal = get(node.dimensionsGlobal);
+        const dimensionsUs = get(node.dimensionsUs);
+        if (artist) mf.artist = artist;
+        if (artMovement) mf.artMovement = artMovement;
+        if (theme) mf.theme = theme;
+        if (medium) mf.medium = medium;
+        if (dimensionsGlobal) mf.dimensionsGlobal = dimensionsGlobal;
+        if (dimensionsUs) mf.dimensionsUs = dimensionsUs;
+        if (Object.keys(mf).length > 0) map.set(pid, mf);
       }
     } catch {
       // Skip this chunk; webhook will retry on future changes
     }
   }
   console.log(
-    `artist-meta: resolved ${map.size}/${ids.length} (host=${env.SHOPIFY_STORE_DOMAIN})`,
+    `product-meta: resolved ${map.size}/${ids.length} (host=${env.SHOPIFY_STORE_DOMAIN})`,
   );
   return map;
 }
 
+/** Backwards compatibility wrapper to fetch only artist metafields. */
+export async function fetchArtistMetafields(
+  ids: number[],
+  env: Env,
+): Promise<Map<number, string>> {
+  const res = await fetchProductMetafields(ids, env);
+  const out = new Map<number, string>();
+  for (const [k, v] of res.entries()) {
+    if (v.artist) out.set(k, v.artist);
+  }
+  return out;
+}
