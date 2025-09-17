@@ -35,8 +35,30 @@ export async function fetchProductMetafields(
         id
         ... on Product {
           artist: metafield(namespace: "custom", key: "artist") { value }
-          artMovement: metafield(namespace: "shopify", key: "art-movement") { value }
-          theme: metafield(namespace: "shopify", key: "theme") { value }
+          artMovement: metafield(namespace: "shopify", key: "art-movement") {
+            value
+            references(first: 10) {
+              nodes {
+                ... on Metaobject {
+                  id
+                  handle
+                  label: field(key: "label") { value }
+                }
+              }
+            }
+          }
+          theme: metafield(namespace: "shopify", key: "theme") {
+            value
+            references(first: 10) {
+              nodes {
+                ... on Metaobject {
+                  id
+                  handle
+                  label: field(key: "label") { value }
+                }
+              }
+            }
+          }
           medium: metafield(namespace: "custom", key: "medium") { value }
           dimensionsGlobal: metafield(namespace: "custom", key: "dimensions_global") { value }
           dimensionsUs: metafield(namespace: "custom", key: "dimensions_us") { value }
@@ -73,11 +95,22 @@ export async function fetchProductMetafields(
         });
         continue;
       }
+      type MetaobjectNode = {
+        id?: string;
+        handle?: string;
+        label?: { value?: string | null } | null;
+      };
       type ProductNode = {
         id?: string;
         artist?: { value?: string | null } | null;
-        artMovement?: { value?: string | null } | null;
-        theme?: { value?: string | null } | null;
+        artMovement?: {
+          value?: string | null;
+          references?: { nodes?: Array<MetaobjectNode | null> } | null;
+        } | null;
+        theme?: {
+          value?: string | null;
+          references?: { nodes?: Array<MetaobjectNode | null> } | null;
+        } | null;
         medium?: { value?: string | null } | null;
         dimensionsGlobal?: { value?: string | null } | null;
         dimensionsUs?: { value?: string | null } | null;
@@ -93,8 +126,20 @@ export async function fetchProductMetafields(
         const mf: ProductMetafields = {};
         const get = (f?: { value?: string | null } | null) => f?.value?.trim();
         const artist = get(node.artist);
-        const artMovement = get(node.artMovement);
-        const theme = get(node.theme);
+        const readRefs = (mf?: {
+          value?: string | null;
+          references?: { nodes?: Array<MetaobjectNode | null> } | null;
+        } | null) => {
+          const nodes = mf?.references?.nodes ?? [];
+          const labels = nodes
+            .map((m) => m?.label?.value?.trim() || m?.handle?.trim())
+            .filter((s): s is string => Boolean(s && s.length > 0));
+          // Only support a single value; prefer the first labeled reference.
+          if (labels.length > 0) return labels[0]!;
+          return mf?.value?.trim();
+        };
+        const artMovement = readRefs(node.artMovement);
+        const theme = readRefs(node.theme);
         const medium = get(node.medium);
         const dimensionsGlobal = get(node.dimensionsGlobal);
         const dimensionsUs = get(node.dimensionsUs);
