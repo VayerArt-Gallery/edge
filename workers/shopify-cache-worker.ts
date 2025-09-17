@@ -1,4 +1,4 @@
-import type { Env } from "./index";
+import type { Env } from "../types/env";
 
 export async function handleShopifyCache(
   request: Request,

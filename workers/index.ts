@@ -1,17 +1,6 @@
 import { handleConnectSync } from "./connect/index";
 import { handleShopifyCache } from "./shopify-cache-worker";
-
-export interface Env {
-  CONNECT_SHARED_SECRET: string;
-  SHOPIFY_ADMIN_API_TOKEN: string;
-  SHOPIFY_STORE_DOMAIN: string;
-  SHOPIFY_API_VERSION: string;
-  SANITY_PROJECT_ID: string;
-  SANITY_DATASET: string;
-  SANITY_SYNC_TOKEN: string;
-  CACHE_TTL?: string;
-  CACHE_SWR?: string;
-}
+import type { Env } from "../types/env";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
