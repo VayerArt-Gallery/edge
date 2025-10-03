@@ -1,7 +1,3 @@
-export interface ArtistValue {
-  value: string;
-}
-
 export interface CollectionSummary {
   id: string;
   title: string;
@@ -25,7 +21,16 @@ export interface ProductsQueryData {
     edges: Array<{
       cursor: string;
       node: {
-        metafield?: { value?: string | null } | null;
+        metafield?: {
+          value?: string | null;
+          references?: {
+            nodes?: Array<{
+              id?: string;
+              handle?: string;
+              label?: { value?: string | null } | null;
+            } | null>;
+          } | null;
+        } | null;
       };
     }>;
     pageInfo: { hasNextPage: boolean };

@@ -1,6 +1,7 @@
 import { handleConnectSync } from "./connect/index";
 import { handleShopifyCache } from "./shopify-cache-worker";
 import { syncArtistCollections } from "./cron/artist-collections";
+import { syncStyleCollections } from "./cron/style-collections";
 import type { Env } from "../types/env";
 
 export default {
@@ -18,16 +19,15 @@ export default {
       return handleShopifyCache(request, env, ctx);
     }
 
-    if (
-      pathname === "/api/internal/run-artist-collections" &&
-      request.method === "POST"
-    ) {
+    if (pathname === "/api/internal/sync" && request.method === "POST") {
       if (!authorizeManualRun(request, env)) {
         return new Response("Unauthorized", { status: 401 });
       }
 
-      ctx.waitUntil(syncArtistCollections(env));
-      return new Response("Manual artist collection sync triggered.");
+      ctx.waitUntil(
+        Promise.all([syncArtistCollections(env), syncStyleCollections(env)]),
+      );
+      return new Response("Manual collection sync triggered.");
     }
 
     return new Response("Not found", { status: 404 });
@@ -39,7 +39,9 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     console.log(`cron trigger received (${event.cron})`);
-    ctx.waitUntil(syncArtistCollections(env));
+    ctx.waitUntil(
+      Promise.all([syncArtistCollections(env), syncStyleCollections(env)]),
+    );
   },
 };
 
