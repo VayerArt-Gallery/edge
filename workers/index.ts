@@ -1,5 +1,6 @@
 import { handleConnectSync } from "./connect/index";
 import { handleShopifyCache } from "./shopify-cache-worker";
+import { syncArtistCollections } from "./cron/artist-collections";
 import type { Env } from "../types/env";
 
 export default {
@@ -17,5 +18,14 @@ export default {
     }
 
     return new Response("Not found", { status: 404 });
+  },
+
+  async scheduled(
+    event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    console.log(`cron trigger received (${event.cron})`);
+    ctx.waitUntil(syncArtistCollections(env));
   },
 };

@@ -1,7 +1,7 @@
 name = "edge-workers"
 main = "./workers/index.ts"
 compatibility_date = "2025-09-12"
-account_id = "3cee040d70875b07bcefb0760d426bde"   # add this if not present
+account_id = "3cee040d70875b07bcefb0760d426bde"
 
 [vars]
 SHOPIFY_API_VERSION = "2025-07"
@@ -18,6 +18,8 @@ routes = [
     { pattern = "ag-gallery.com/api/connect/sync", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" }
 ]
 
-# wrangler.toml (wrangler v3.88.0^)
+[triggers]
+crons = ["0 9 * * *"]
+
 [observability.logs]
 enabled = true
