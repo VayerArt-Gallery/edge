@@ -1,34 +1,34 @@
-interface Env {
-  SHOPIFY_ADMIN_API_TOKEN: string;
-  SHOPIFY_STORE_DOMAIN: string;
-  SHOPIFY_API_VERSION: string;
-}
+import type { Env } from "../../types/env";
+import type {
+  ArtistValue,
+  CollectionCreateData,
+  CollectionSummary,
+  CollectionsQueryData,
+  MetafieldDefinitionsData,
+  ProductsQueryData,
+  PublicationsQueryData,
+  PublishablePublishData,
+  ShopifyGraphqlResponse,
+  ShopifyUserError,
+} from "../../types/shopify-collections";
+import { toSlug } from "../../lib/utils";
 
-interface Artist {
-  value: string;
-}
-
-interface Collection {
-  id: string;
-  title: string;
-}
-
-interface ShopifyResponse {
-  data?: any;
-  errors?: Array<{
-    message: string;
-    locations?: Array<{ line: number; column: number }>;
-    path?: string[];
-    extensions?: Record<string, any>;
-  }>;
-}
+const ARTIST_METAFIELD_NAMESPACE = "custom";
+const ARTIST_METAFIELD_KEY = "artist";
+const ARTIST_COLLECTION_DESCRIPTION = "artist";
+const PRODUCT_PAGE_SIZE = 250;
+const COLLECTION_PAGE_SIZE = 250;
+const SALES_CHANNEL_NAME = "React Storefront";
+const COLLECTION_HANDLE_PREFIX = "artist-";
 
 export async function syncArtistCollections(env: Env): Promise<void> {
-  const shopifyUrl = `https://${env.SHOPIFY_STORE_DOMAIN}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`;
+  const shopifyUrl = buildGraphqlUrl(env);
 
   const metafieldDefId = await getMetafieldDefinitionId(shopifyUrl, env);
   if (!metafieldDefId) {
-    console.error("Could not find metafield definition for custom.artist");
+    console.error(
+      `Could not find metafield definition for ${ARTIST_METAFIELD_NAMESPACE}.${ARTIST_METAFIELD_KEY}`,
+    );
     return;
   }
 
@@ -36,19 +36,26 @@ export async function syncArtistCollections(env: Env): Promise<void> {
   console.log(`Found ${artists.length} unique artists`);
 
   const existingCollections = await fetchExistingCollections(shopifyUrl, env);
-  const existingTitles = new Set(existingCollections.map((c) => c.title));
+  const existingHandles = new Set(
+    existingCollections.map((collection) => collection.handle),
+  );
 
   for (const artist of artists) {
-    if (!existingTitles.has(artist.value)) {
-      await createArtistCollection(
-        shopifyUrl,
-        env,
-        artist.value,
-        metafieldDefId,
+    const handle = buildHandle(artist.value);
+    if (!handle) {
+      console.warn(
+        `Skipping artist "${artist.value}"; unable to build a valid collection handle`,
       );
-    } else {
-      console.log(`Collection already exists: ${artist.value}`);
+      continue;
     }
+
+    if (existingHandles.has(handle)) {
+      console.log(`Collection already exists: ${artist.value}`);
+      continue;
+    }
+
+    existingHandles.add(handle);
+    await createArtistCollection(shopifyUrl, env, artist.value, handle, metafieldDefId);
   }
 }
 
@@ -56,7 +63,8 @@ async function createArtistCollection(
   url: string,
   env: Env,
   artistName: string,
-  metafieldDefId: string,
+  handle: string,
+  metafieldDefinitionId: string,
 ): Promise<void> {
   const mutation = `
     mutation CreateCollection($input: CollectionInput!) {
@@ -64,6 +72,7 @@ async function createArtistCollection(
         collection {
           id
           title
+          handle
         }
         userErrors {
           field
@@ -75,7 +84,8 @@ async function createArtistCollection(
 
   const input = {
     title: artistName,
-    descriptionHtml: "artist",
+    handle,
+    descriptionHtml: ARTIST_COLLECTION_DESCRIPTION,
     ruleSet: {
       appliedDisjunctively: false,
       rules: [
@@ -83,13 +93,13 @@ async function createArtistCollection(
           column: "PRODUCT_METAFIELD_DEFINITION",
           relation: "EQUALS",
           condition: artistName,
-          conditionObjectId: metafieldDefId,
+          conditionObjectId: metafieldDefinitionId,
         },
       ],
     },
     metafields: [
       {
-        namespace: "custom",
+        namespace: ARTIST_METAFIELD_NAMESPACE,
         key: "type",
         value: "Artist",
         type: "single_line_text_field",
@@ -98,56 +108,43 @@ async function createArtistCollection(
   };
 
   try {
-    const response = await shopifyRequest(url, env, mutation, { input });
+    const response = await shopifyRequest<CollectionCreateData>(
+      url,
+      env,
+      mutation,
+      {
+        input,
+      },
+    );
 
-    if (!response.data?.collectionCreate) {
+    const result = response.data?.collectionCreate;
+    if (!result) {
       console.error("Unexpected response:", JSON.stringify(response));
       return;
     }
 
-    const { userErrors, collection } = response.data.collectionCreate;
-
+    const userErrors = result.userErrors ?? [];
     if (userErrors.length > 0) {
-      console.error(
-        `Errors creating collection for ${artistName}:`,
-        userErrors,
-      );
+      logUserErrors(`Errors creating collection for ${artistName}`, userErrors);
       return;
     }
 
-    console.log(`Created collection: ${collection.title}`);
+    if (!result.collection) {
+      console.error(`Shopify did not return a collection for ${artistName}`);
+      return;
+    }
 
-    // Publish to sales channel
-    await publishToSalesChannel(url, env, collection.id);
+    console.log(`Created collection: ${result.collection.title}`);
+    await publishToSalesChannel(url, env, result.collection.id);
   } catch (error) {
     console.error(`Failed to create collection for ${artistName}:`, error);
   }
-
-  // try {
-  //   const response = await shopifyRequest(url, env, mutation, { input });
-
-  //   if (!response.data?.collectionCreate) {
-  //     console.error("Unexpected response:", JSON.stringify(response));
-  //     return;
-  //   }
-
-  //   const { userErrors, collection } = response.data.collectionCreate;
-
-  //   if (userErrors.length > 0) {
-  //     console.error(
-  //       `Errors creating collection for ${artistName}:`,
-  //       userErrors,
-  //     );
-  //     return;
-  //   }
-
-  //   console.log(`Created collection: ${collection.title}`);
-  // } catch (error) {
-  //   console.error(`Failed to create collection for ${artistName}:`, error);
-  // }
 }
 
-async function fetchUniqueArtists(url: string, env: Env): Promise<Artist[]> {
+async function fetchUniqueArtists(
+  url: string,
+  env: Env,
+): Promise<ArtistValue[]> {
   const artists = new Set<string>();
   let hasNextPage = true;
   let cursor: string | null = null;
@@ -155,10 +152,10 @@ async function fetchUniqueArtists(url: string, env: Env): Promise<Artist[]> {
   while (hasNextPage) {
     const query = `
       query GetProducts($cursor: String) {
-        products(first: 250, after: $cursor) {
+        products(first: ${PRODUCT_PAGE_SIZE}, after: $cursor) {
           edges {
             node {
-              metafield(namespace: "custom", key: "artist") {
+              metafield(namespace: "${ARTIST_METAFIELD_NAMESPACE}", key: "${ARTIST_METAFIELD_KEY}") {
                 value
               }
             }
@@ -171,20 +168,25 @@ async function fetchUniqueArtists(url: string, env: Env): Promise<Artist[]> {
       }
     `;
 
-    const response = await shopifyRequest(url, env, query, {
-      cursor,
-    });
-    const products = response.data.products;
+    const response: ShopifyGraphqlResponse<ProductsQueryData> =
+      await shopifyRequest<ProductsQueryData>(url, env, query, {
+        cursor,
+      });
 
-    products.edges.forEach((edge: any) => {
-      const artist = edge.node.metafield?.value;
-      if (artist) {
-        artists.add(artist);
+    const products = response.data?.products;
+    if (!products) {
+      throw new Error("Missing products data from Shopify response");
+    }
+
+    for (const edge of products.edges) {
+      const artistValue = edge.node.metafield?.value;
+      if (artistValue) {
+        artists.add(artistValue);
       }
-    });
+    }
 
     hasNextPage = products.pageInfo.hasNextPage;
-    cursor = products.edges[products.edges.length - 1]?.cursor || null;
+    cursor = products.edges[products.edges.length - 1]?.cursor ?? null;
   }
 
   return Array.from(artists).map((value) => ({ value }));
@@ -193,19 +195,20 @@ async function fetchUniqueArtists(url: string, env: Env): Promise<Artist[]> {
 async function fetchExistingCollections(
   url: string,
   env: Env,
-): Promise<Collection[]> {
-  const collections: Collection[] = [];
+): Promise<CollectionSummary[]> {
+  const collections: CollectionSummary[] = [];
   let hasNextPage = true;
   let cursor: string | null = null;
 
   while (hasNextPage) {
     const query = `
-      query GetCollections($cursor: String) {
-        collections(first: 250, after: $cursor) {
+      query GetCollections($cursor: String, $search: String!) {
+        collections(first: ${COLLECTION_PAGE_SIZE}, after: $cursor, query: $search) {
           edges {
             node {
               id
               title
+              handle
             }
             cursor
           }
@@ -216,32 +219,35 @@ async function fetchExistingCollections(
       }
     `;
 
-    const response = await shopifyRequest(url, env, query, {
-      cursor,
-    });
-    const collectionData = response.data.collections;
+    const response: ShopifyGraphqlResponse<CollectionsQueryData> =
+      await shopifyRequest<CollectionsQueryData>(url, env, query, {
+        cursor,
+        search: buildCollectionSearchQuery(),
+      });
 
-    collections.push(
-      ...collectionData.edges.map((edge: any) => ({
-        id: edge.node.id,
-        title: edge.node.title,
-      })),
-    );
+    const collectionData = response.data?.collections;
+    if (!collectionData) {
+      throw new Error("Missing collections data from Shopify response");
+    }
+
+    for (const edge of collectionData.edges) {
+      collections.push(edge.node);
+    }
 
     hasNextPage = collectionData.pageInfo.hasNextPage;
     cursor =
-      collectionData.edges[collectionData.edges.length - 1]?.cursor || null;
+      collectionData.edges[collectionData.edges.length - 1]?.cursor ?? null;
   }
 
   return collections;
 }
 
-async function shopifyRequest(
+async function shopifyRequest<T>(
   url: string,
   env: Env,
   query: string,
-  variables: Record<string, any> = {},
-): Promise<any> {
+  variables: Record<string, unknown> = {},
+): Promise<ShopifyGraphqlResponse<T>> {
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -256,9 +262,9 @@ async function shopifyRequest(
     throw new Error(`Shopify API error: ${response.status} - ${text}`);
   }
 
-  const json: ShopifyResponse = await response.json();
+  const json = (await response.json()) as ShopifyGraphqlResponse<T>;
 
-  if (json.errors) {
+  if (json.errors?.length) {
     console.error("GraphQL errors:", JSON.stringify(json.errors));
     throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`);
   }
@@ -271,12 +277,12 @@ async function getMetafieldDefinitionId(
   env: Env,
 ): Promise<string | null> {
   const query = `
-    query {
+    query GetMetafieldDefinition {
       metafieldDefinitions(
-        first: 250,
+        first: ${COLLECTION_PAGE_SIZE},
         ownerType: PRODUCT,
-        namespace: "custom",
-        key: "artist"
+        namespace: "${ARTIST_METAFIELD_NAMESPACE}",
+        key: "${ARTIST_METAFIELD_KEY}"
       ) {
         edges {
           node {
@@ -287,10 +293,14 @@ async function getMetafieldDefinitionId(
     }
   `;
 
-  const response = await shopifyRequest(url, env, query);
-  const edges = response.data.metafieldDefinitions.edges;
-
-  return edges.length > 0 ? edges[0].node.id : null;
+  const response = await shopifyRequest<MetafieldDefinitionsData>(
+    url,
+    env,
+    query,
+  );
+  const edges = response.data?.metafieldDefinitions.edges ?? [];
+  const firstEdge = edges[0];
+  return firstEdge?.node.id ?? null;
 }
 
 async function publishToSalesChannel(
@@ -298,7 +308,7 @@ async function publishToSalesChannel(
   env: Env,
   collectionId: string,
 ): Promise<void> {
-  const channelQuery = `
+  const publicationsQuery = `
     {
       publications(first: 50) {
         edges {
@@ -311,13 +321,15 @@ async function publishToSalesChannel(
     }
   `;
 
-  const channelResponse = await shopifyRequest(url, env, channelQuery);
-  const publication = channelResponse.data.publications.edges.find(
-    (edge: any) => edge.node.name === "React Storefront",
+  const publicationsResponse: ShopifyGraphqlResponse<PublicationsQueryData> =
+    await shopifyRequest<PublicationsQueryData>(url, env, publicationsQuery);
+
+  const publicationEdge = publicationsResponse.data?.publications.edges.find(
+    (edge) => edge.node.name === SALES_CHANNEL_NAME,
   );
 
-  if (!publication) {
-    console.error("Sales channel 'React Storefront' not found");
+  if (!publicationEdge) {
+    console.error(`Sales channel '${SALES_CHANNEL_NAME}' not found`);
     return;
   }
 
@@ -337,8 +349,34 @@ async function publishToSalesChannel(
     }
   `;
 
-  await shopifyRequest(url, env, publishMutation, {
-    id: collectionId,
-    input: [{ publicationId: publication.node.id }],
-  });
+  const result: ShopifyGraphqlResponse<PublishablePublishData> =
+    await shopifyRequest<PublishablePublishData>(url, env, publishMutation, {
+      id: collectionId,
+      input: [{ publicationId: publicationEdge.node.id }],
+    });
+
+  const userErrors = result.data?.publishablePublish?.userErrors ?? [];
+  if (userErrors.length) {
+    logUserErrors(`Errors publishing collection ${collectionId}`, userErrors);
+  }
+}
+
+function buildGraphqlUrl(env: Env): string {
+  return `https://${env.SHOPIFY_STORE_DOMAIN}/admin/api/${env.SHOPIFY_API_VERSION}/graphql.json`;
+}
+
+function logUserErrors(message: string, errors: ShopifyUserError[]): void {
+  console.error(
+    message,
+    errors.map((error) => ({ field: error.field, message: error.message })),
+  );
+}
+
+function buildHandle(artistName: string): string {
+  const slug = toSlug(artistName);
+  return slug ? `${COLLECTION_HANDLE_PREFIX}${slug}` : "";
+}
+
+function buildCollectionSearchQuery(): string {
+  return `handle:${COLLECTION_HANDLE_PREFIX}*`;
 }
