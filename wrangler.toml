@@ -19,7 +19,7 @@ routes = [
 ]
 
 [triggers]
-crons = ["0 9 * * *"]
+crons = ["0 8 * * *"]
 
 [observability.logs]
 enabled = true

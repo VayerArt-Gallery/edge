@@ -8,5 +8,5 @@ export interface Env {
   SANITY_SYNC_TOKEN: string;
   CACHE_TTL?: string;
   CACHE_SWR?: string;
+  MANUAL_ARTIST_CRON_SECRET?: string;
 }
-
