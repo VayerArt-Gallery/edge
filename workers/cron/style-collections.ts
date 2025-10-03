@@ -21,14 +21,20 @@ const STYLE_COLLECTION_CONFIG: MetafieldCollectionConfig = {
   ],
   sortOrder: "ALPHA_ASC",
   extractValues: (_raw, references) =>
-    references
-      .map<CollectionValue | null>((ref) => {
-        const condition = ref.id?.trim();
-        const title = ref.label?.value?.trim() || ref.handle?.trim();
-        if (!condition || !title) return null;
-        return { title, condition };
-      })
-      .filter((entry): entry is CollectionValue => entry !== null),
+    references.flatMap((ref) => {
+      const condition = ref.id?.trim();
+      const title = ref.label?.value?.trim() || ref.handle?.trim();
+      return condition && title ? [{ title, condition }] : [];
+    }),
+  // extractValues: (_raw, references) =>
+  //   references
+  //     .map<CollectionValue | null>((ref) => {
+  //       const condition = ref.id?.trim();
+  //       const title = ref.label?.value?.trim() || ref.handle?.trim();
+  //       if (!condition || !title) return null;
+  //       return { title, condition };
+  //     })
+  //     .filter((entry): entry is CollectionValue => entry !== null),
 };
 
 export function syncStyleCollections(env: Env): Promise<void> {

@@ -160,11 +160,8 @@ async function createCollection(
       ],
     },
     metafields: config.collectionMetafields ?? [],
+    ...(config.sortOrder && { sortOrder: config.sortOrder }),
   };
-
-  if (config.sortOrder) {
-    input["sortOrder"] = config.sortOrder;
-  }
 
   try {
     const response = await shopifyRequest<CollectionCreateData>(
@@ -199,9 +196,7 @@ async function createCollection(
       return;
     }
 
-    console.log(
-      `Created ${config.label} collection: ${created.title}`,
-    );
+    console.log(`Created ${config.label} collection: ${created.title}`);
     await publishToSalesChannel(url, env, created.id, config.label);
   } catch (error) {
     console.error(
@@ -262,13 +257,9 @@ async function fetchUniqueMetafieldEntries(
       const metafield = edge.node.metafield;
       if (!metafield) continue;
 
-      const references = (metafield.references?.nodes ?? [])
-        .filter((node): node is MetafieldReferenceNode => Boolean(node))
-        .map((node) => ({
-          id: node.id,
-          handle: node.handle,
-          label: node.label,
-        }));
+      const references = (metafield.references?.nodes ?? []).filter(
+        (node): node is MetafieldReferenceNode => Boolean(node),
+      );
 
       const extracted = (config.extractValues ?? defaultExtractValues)(
         metafield.value,
@@ -401,9 +392,8 @@ async function getMetafieldDefinitionId(
     env,
     query,
   );
-  const edges = response.data?.metafieldDefinitions.edges ?? [];
-  const firstEdge = edges[0];
-  return firstEdge?.node.id ?? null;
+
+  return response.data?.metafieldDefinitions.edges[0]?.node.id ?? null;
 }
 
 async function publishToSalesChannel(
