@@ -2,6 +2,7 @@ import { handleConnectSync } from "./connect/index";
 import { handleShopifyCache } from "./shopify-cache-worker";
 import { syncArtistCollections } from "./cron/artist-collections";
 import { syncStyleCollections } from "./cron/style-collections";
+import { syncThemeCollections } from "./cron/theme-collections";
 import type { Env } from "../types/env";
 
 export default {
@@ -19,13 +20,18 @@ export default {
       return handleShopifyCache(request, env, ctx);
     }
 
+    // Manual collection sync
     if (pathname === "/api/internal/sync" && request.method === "POST") {
       if (!authorizeManualRun(request, env)) {
         return new Response("Unauthorized", { status: 401 });
       }
 
       ctx.waitUntil(
-        Promise.all([syncArtistCollections(env), syncStyleCollections(env)]),
+        Promise.all([
+          syncArtistCollections(env),
+          syncStyleCollections(env),
+          syncThemeCollections(env),
+        ]),
       );
       return new Response("Manual collection sync triggered.");
     }
@@ -40,7 +46,11 @@ export default {
   ): Promise<void> {
     console.log(`cron trigger received (${event.cron})`);
     ctx.waitUntil(
-      Promise.all([syncArtistCollections(env), syncStyleCollections(env)]),
+      Promise.all([
+        syncArtistCollections(env),
+        syncStyleCollections(env),
+        syncThemeCollections(env),
+      ]),
     );
   },
 };

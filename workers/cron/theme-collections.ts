@@ -4,17 +4,17 @@ import {
   type MetafieldCollectionConfig,
 } from "../../lib/shopify/collection-sync";
 
-const STYLE_COLLECTION_CONFIG: MetafieldCollectionConfig = {
-  label: "style",
+const THEME_COLLECTION_CONFIG: MetafieldCollectionConfig = {
+  label: "theme",
   namespace: "shopify",
-  key: "art-movement",
-  handlePrefix: "style-",
-  description: "style",
+  key: "theme",
+  handlePrefix: "theme-",
+  description: "theme",
   collectionMetafields: [
     {
       namespace: "custom",
       key: "type",
-      value: "Style",
+      value: "Theme",
       type: "single_line_text_field",
     },
   ],
@@ -27,6 +27,7 @@ const STYLE_COLLECTION_CONFIG: MetafieldCollectionConfig = {
     }),
 };
 
-export function syncStyleCollections(env: Env): Promise<void> {
-  return syncMetafieldCollections(env, STYLE_COLLECTION_CONFIG);
+export function syncThemeCollections(env: Env): Promise<void> {
+  return syncMetafieldCollections(env, THEME_COLLECTION_CONFIG);
 }
+
