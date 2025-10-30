@@ -12,4 +12,5 @@ export interface Env {
   CACHE_SWR?: string;
   MANUAL_ARTIST_CRON_SECRET?: string;
   CART_KV_BINDING: KVNamespace;
+  SHOPIFY_WEBHOOK_SECRET: string;
 }
