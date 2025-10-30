@@ -1,5 +1,6 @@
 import { handleConnectSync } from "./connect/index";
 import { handleShopifyCache } from "./shopify-cache-worker";
+import { handleCheckoutSession } from "./checkout-session";
 import { syncArtistCollections } from "./cron/artist-collections";
 import { syncStyleCollections } from "./cron/style-collections";
 import { syncThemeCollections } from "./cron/theme-collections";
@@ -18,6 +19,11 @@ export default {
     // Shopify cache proxy
     if (pathname === "/api/shopify/graphql") {
       return handleShopifyCache(request, env, ctx);
+    }
+
+    // Checkout session ingestion
+    if (pathname === "/api/internal/checkout-session") {
+      return handleCheckoutSession(request, env);
     }
 
     // Manual collection sync

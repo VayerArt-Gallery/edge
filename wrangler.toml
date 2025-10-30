@@ -15,7 +15,9 @@ routes = [
     # Shopify POST request cache
     { pattern = "ag-gallery.com/api/shopify/graphql", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
     # Sanity Connect webhook endpoint
-    { pattern = "ag-gallery.com/api/connect/sync", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" }
+    { pattern = "ag-gallery.com/api/connect/sync", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
+    # Checkout session ingestion endpoint
+    { pattern = "ag-gallery.com/api/internal/checkout-session", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" }
 ]
 
 [triggers]
@@ -23,3 +25,7 @@ crons = ["0 8 * * *"]
 
 [observability.logs]
 enabled = true
+
+[[kv_namespaces]]
+binding = "CART_KV_BINDING"
+id = "4ecebe4d48d343fc8992b975aed79f40"

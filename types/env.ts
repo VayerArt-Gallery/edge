@@ -1,3 +1,5 @@
+import type { KVNamespace } from '@cloudflare/workers-types'
+
 export interface Env {
   CONNECT_SHARED_SECRET: string;
   SHOPIFY_ADMIN_API_TOKEN: string;
@@ -9,4 +11,5 @@ export interface Env {
   CACHE_TTL?: string;
   CACHE_SWR?: string;
   MANUAL_ARTIST_CRON_SECRET?: string;
+  CART_KV_BINDING: KVNamespace;
 }
