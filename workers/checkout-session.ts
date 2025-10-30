@@ -46,16 +46,65 @@ function extractCartKey(cartId: string | null): string | null {
   return parts[parts.length - 1] || null;
 }
 
+type RuntimeEnv = "development" | "production";
+
+function resolveRuntimeEnv(env: Env): RuntimeEnv {
+  return env.ENVIRONMENT === "development" ? "development" : "production";
+}
+
+function allowedOriginsFor(envType: RuntimeEnv): readonly string[] {
+  if (envType === "development") {
+    return ["http://localhost:3000"] as const;
+  }
+  return ["https://www.ag-gallery.com", "https://ag-gallery.com"] as const;
+}
+
+function resolveAllowedOrigin(
+  envType: RuntimeEnv,
+  origin: string | null,
+): string | null {
+  if (!origin) return null;
+  const allowed = allowedOriginsFor(envType);
+  return allowed.includes(origin) ? origin : null;
+}
+
 export async function handleCheckoutSession(
   request: Request,
   env: Env,
 ): Promise<Response> {
+  const runtimeEnv = resolveRuntimeEnv(env);
+  const origins = allowedOriginsFor(runtimeEnv);
+  const originHeader = request.headers.get("Origin");
+  const allowedOrigin = resolveAllowedOrigin(runtimeEnv, originHeader);
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": allowedOrigin ?? origins[0],
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  } as const;
+
+  if (request.method === "OPTIONS") {
+    if (!allowedOrigin) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   if (request.method === "GET") {
-    return handleGetStatus(request, env);
+    if (!allowedOrigin && originHeader) {
+      return new Response("Forbidden", { status: 403, headers: corsHeaders });
+    }
+    return handleGetStatus(request, env, corsHeaders);
   }
 
   if (request.method !== "POST") {
-    return new Response("Method not allowed", { status: 405 });
+    return new Response("Method not allowed", {
+      status: 405,
+      headers: corsHeaders,
+    });
+  }
+
+  if (originHeader && !allowedOrigin) {
+    return new Response("Forbidden", { status: 403, headers: corsHeaders });
   }
 
   let body: CheckoutSessionPayload | undefined;
@@ -63,11 +112,17 @@ export async function handleCheckoutSession(
     body = (await request.json()) as CheckoutSessionPayload;
   } catch (error) {
     console.error("[checkout-session] failed to parse body", error);
-    return new Response("Invalid JSON", { status: 400 });
+    return new Response("Invalid JSON", {
+      status: 400,
+      headers: corsHeaders,
+    });
   }
 
   if (!body || typeof body !== "object") {
-    return new Response("Invalid payload", { status: 400 });
+    return new Response("Invalid payload", {
+      status: 400,
+      headers: corsHeaders,
+    });
   }
 
   const clientId = body.clientId?.trim();
@@ -75,7 +130,10 @@ export async function handleCheckoutSession(
   const checkoutUrl = body.checkoutUrl?.trim();
 
   if (!clientId || !cartId || !checkoutUrl) {
-    return new Response("Missing required fields", { status: 400 });
+    return new Response("Missing required fields", {
+      status: 400,
+      headers: corsHeaders,
+    });
   }
 
   const checkoutToken = extractCheckoutToken(checkoutUrl);
@@ -135,20 +193,30 @@ export async function handleCheckoutSession(
     await Promise.all(operations);
   } catch (error) {
     console.error("[checkout-session] failed to persist", error);
-    return new Response("Failed to persist session", { status: 500 });
+    return new Response("Failed to persist session", {
+      status: 500,
+      headers: corsHeaders,
+    });
   }
 
-  return new Response(null, { status: 204 });
+  return new Response(null, { status: 204, headers: corsHeaders });
 }
 
 export type { CheckoutSessionRecord };
 
-async function handleGetStatus(request: Request, env: Env): Promise<Response> {
+async function handleGetStatus(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>,
+): Promise<Response> {
   const url = new URL(request.url);
   const clientId = url.searchParams.get("clientId")?.trim();
 
   if (!clientId) {
-    return new Response("Missing clientId", { status: 400 });
+    return new Response("Missing clientId", {
+      status: 400,
+      headers: corsHeaders,
+    });
   }
 
   let record: CheckoutSessionRecord | null = null;
@@ -159,11 +227,14 @@ async function handleGetStatus(request: Request, env: Env): Promise<Response> {
     )) as CheckoutSessionRecord | null;
   } catch (error) {
     console.error("[checkout-session] failed to read status", error);
-    return new Response("Failed to read status", { status: 500 });
+    return new Response("Failed to read status", {
+      status: 500,
+      headers: corsHeaders,
+    });
   }
 
   if (!record) {
-    return new Response(null, { status: 204 });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   const body = JSON.stringify({
@@ -176,6 +247,7 @@ async function handleGetStatus(request: Request, env: Env): Promise<Response> {
   return new Response(body, {
     status: 200,
     headers: {
+      ...corsHeaders,
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
     },
