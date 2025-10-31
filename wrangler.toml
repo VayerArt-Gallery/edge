@@ -14,12 +14,16 @@ SANITY_DATASET = "production"
 routes = [
     # Shopify POST request cache
     { pattern = "ag-gallery.com/api/shopify/graphql", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
+    { pattern = "www.ag-gallery.com/api/shopify/graphql", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
     # Sanity Connect webhook endpoint
     { pattern = "ag-gallery.com/api/connect/sync", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
+    { pattern = "www.ag-gallery.com/api/connect/sync", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
     # Checkout session ingestion endpoint
     { pattern = "ag-gallery.com/api/internal/checkout-session", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
+    { pattern = "www.ag-gallery.com/api/internal/checkout-session", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
     # Shopify order webhook endpoint
-    { pattern = "ag-gallery.com/api/webhooks/shopify/orders", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" }
+    { pattern = "ag-gallery.com/api/webhooks/shopify/orders", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" },
+    { pattern = "www.ag-gallery.com/api/webhooks/shopify/orders", zone_id = "3e0394213b9f8d0fb1aba6e5c05e43e4" }
 ]
 
 [triggers]
