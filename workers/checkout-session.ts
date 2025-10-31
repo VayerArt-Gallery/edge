@@ -159,16 +159,6 @@ export async function handleCheckoutSession(
     ),
   );
 
-  if (cartId) {
-    operations.push(
-      env.CART_KV_BINDING.put(
-        `checkout:cart:${cartId}`,
-        JSON.stringify(record),
-        { expirationTtl: EXPIRATION_TTL_SECONDS },
-      ),
-    );
-  }
-
   if (cartKey) {
     operations.push(
       env.CART_KV_BINDING.put(

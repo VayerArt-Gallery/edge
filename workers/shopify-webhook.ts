@@ -108,10 +108,6 @@ export async function handleShopifyOrderWebhook(
 
   const ops: Promise<void>[] = [];
 
-  if (record.cartId) {
-    ops.push(env.CART_KV_BINDING.delete(`checkout:cart:${record.cartId}`));
-  }
-
   if (record.checkoutToken) {
     ops.push(
       env.CART_KV_BINDING.delete(`checkout:token:${record.checkoutToken}`),
