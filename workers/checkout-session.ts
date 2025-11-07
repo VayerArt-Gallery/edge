@@ -42,8 +42,17 @@ function extractCartKey(cartId: string | null): string | null {
   if (!cartId) return null;
   const trimmed = cartId.trim();
   if (!trimmed) return null;
-  const parts = trimmed.split("/");
-  return parts[parts.length - 1] || null;
+
+  try {
+    const decoded = atob(trimmed);
+    const parts = decoded.split("/");
+    const key = parts[parts.length - 1] || null;
+    return key ?? null;
+  } catch (error) {
+    console.warn("[checkout-session] failed to decode cart id", error);
+    // Fall back to storing the raw token so previous behaviour still works.
+    return trimmed;
+  }
 }
 
 type RuntimeEnv = "development" | "production";

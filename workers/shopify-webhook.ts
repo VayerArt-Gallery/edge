@@ -76,6 +76,11 @@ export async function handleShopifyOrderWebhook(
   const checkoutToken = payload.checkout_token?.trim() ?? null;
   const cartToken = payload.cart_token?.trim() ?? null;
 
+  if (!checkoutToken && !cartToken) {
+    console.warn("[shopify-webhook] payload missing checkout and cart token");
+    return new Response(null, { status: 204 });
+  }
+
   let record: CheckoutSessionRecord | null = null;
 
   if (checkoutToken) {
@@ -95,6 +100,10 @@ export async function handleShopifyOrderWebhook(
   }
 
   if (!record) {
+    console.warn("[shopify-webhook] no checkout record found for payload", {
+      checkoutToken,
+      cartToken,
+    });
     // Nothing to reconcile; acknowledge for idempotency
     return new Response(null, { status: 204 });
   }
