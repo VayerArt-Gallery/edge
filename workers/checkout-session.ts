@@ -228,11 +228,6 @@ export async function handleCheckoutSession(
 
   try {
     await Promise.all(operations);
-    console.log('[checkout-session] stored session', {
-      clientId,
-      cartToken,
-      cartKey,
-    });
   } catch (error) {
     console.error("[checkout-session] failed to persist", error);
     return new Response("Failed to persist session", {

@@ -11,11 +11,6 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
     const pathname = normalizePath(url.pathname);
-    console.log('[edge] incoming request', {
-      method: request.method,
-      originalPath: url.pathname,
-      normalizedPath: pathname,
-    });
 
     // Sanity Connect webhook
     if (pathname === "/api/connect/sync" && request.method === "POST") {
@@ -59,10 +54,6 @@ export default {
       return new Response("Manual collection sync triggered.");
     }
 
-    console.warn('[edge] unhandled request', {
-      method: request.method,
-      pathname: url.pathname,
-    });
     return new Response("Not found", { status: 404 });
   },
 
