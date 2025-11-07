@@ -10,7 +10,12 @@ import type { Env } from "../types/env";
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
-    const { pathname } = url;
+    const pathname = normalizePath(url.pathname);
+    console.log('[edge] incoming request', {
+      method: request.method,
+      originalPath: url.pathname,
+      normalizedPath: pathname,
+    });
 
     // Sanity Connect webhook
     if (pathname === "/api/connect/sync" && request.method === "POST") {
@@ -27,11 +32,15 @@ export default {
       return handleCheckoutSession(request, env);
     }
 
-    if (
-      pathname === "/api/webhooks/shopify/orders" &&
-      request.method === "POST"
-    ) {
-      return handleShopifyOrderWebhook(request, env);
+    if (pathname === "/api/webhooks/shopify/orders") {
+      if (request.method === "POST") {
+        return handleShopifyOrderWebhook(request, env);
+      }
+      console.warn('[edge] unexpected method for shopify webhook', {
+        method: request.method,
+        pathname: url.pathname,
+      });
+      return new Response('Method not allowed', { status: 405 });
     }
 
     // Manual collection sync
@@ -50,6 +59,10 @@ export default {
       return new Response("Manual collection sync triggered.");
     }
 
+    console.warn('[edge] unhandled request', {
+      method: request.method,
+      pathname: url.pathname,
+    });
     return new Response("Not found", { status: 404 });
   },
 
@@ -68,6 +81,11 @@ export default {
     );
   },
 };
+
+function normalizePath(pathname: string): string {
+  if (pathname === '/') return '/';
+  return pathname.replace(/\/+$/u, '');
+}
 
 function authorizeManualRun(request: Request, env: Env): boolean {
   const configuredSecret = env.MANUAL_ARTIST_CRON_SECRET?.trim();
