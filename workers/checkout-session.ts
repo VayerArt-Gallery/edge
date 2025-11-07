@@ -23,36 +23,68 @@ function extractCheckoutToken(checkoutUrl: string): string | null {
   try {
     const url = new URL(checkoutUrl);
     const segments = url.pathname.split("/").filter(Boolean);
-    const checkoutIndex = segments.indexOf("c");
-    if (checkoutIndex >= 0 && checkoutIndex + 1 < segments.length) {
-      return segments[checkoutIndex + 1] ?? null;
+
+    const candidateBuckets: string[] = [];
+
+    const checkoutRootIndex = segments.indexOf("checkouts");
+    if (checkoutRootIndex >= 0) {
+      candidateBuckets.push(...segments.slice(checkoutRootIndex + 1));
     }
 
-    // Storefront sometimes uses /checkouts/<token>
-    if (segments[0] === "checkouts" && segments[1]) {
-      return segments[1];
+    const cartRootIndex = segments.indexOf("cart");
+    if (cartRootIndex >= 0) {
+      candidateBuckets.push(...segments.slice(cartRootIndex + 1));
     }
+
+    if (candidateBuckets.length === 0) {
+      return null;
+    }
+
+    const tokenCandidate = candidateBuckets.find((segment) =>
+      /^[A-Za-z0-9_-]{8,}$/.test(segment),
+    );
+
+    if (tokenCandidate) {
+      return tokenCandidate;
+    }
+
+    console.warn('[checkout-session] no valid token segment detected', {
+      pathname: url.pathname,
+      segments,
+    });
+    return candidateBuckets[0] ?? null;
   } catch (error) {
     console.warn("[checkout-session] failed to extract token", error);
   }
   return null;
 }
 
-function extractCartKey(cartId: string | null): string | null {
-  if (!cartId) return null;
-  const trimmed = cartId.trim();
-  if (!trimmed) return null;
+function extractCartKey(cartId: string | null, checkoutUrl: string): string | null {
+  const sources = [cartId, checkoutUrl];
 
-  try {
-    const decoded = atob(trimmed);
-    const parts = decoded.split("/");
-    const key = parts[parts.length - 1] || null;
-    return key ?? null;
-  } catch (error) {
-    console.warn("[checkout-session] failed to decode cart id", error);
-    // Fall back to storing the raw token so previous behaviour still works.
-    return trimmed;
+  for (const source of sources) {
+    if (!source) continue;
+    const trimmed = source.trim();
+    if (!trimmed) continue;
+
+    const queryIndex = trimmed.indexOf('?');
+    if (queryIndex >= 0) {
+      const search = trimmed.slice(queryIndex + 1);
+      const params = new URLSearchParams(search);
+      const keyParam = params.get('key');
+      if (keyParam) return keyParam;
+    }
   }
+
+  if (cartId) {
+    const withoutQuery = cartId.split('?')[0] ?? cartId;
+    const parts = withoutQuery.split('/');
+    if (parts.length > 0) {
+      return parts[parts.length - 1] ?? null;
+    }
+  }
+
+  return null;
 }
 
 type RuntimeEnv = "development" | "production";
@@ -146,7 +178,13 @@ export async function handleCheckoutSession(
   }
 
   const checkoutToken = extractCheckoutToken(checkoutUrl);
-  const cartKey = extractCartKey(cartId);
+  const cartKey = extractCartKey(cartId, checkoutUrl);
+  if (!checkoutToken) {
+    console.warn('[checkout-session] missing checkout token for url', checkoutUrl);
+  }
+  if (!cartKey) {
+    console.warn('[checkout-session] missing cart key for id', cartId);
+  }
   const storedAt = new Date().toISOString();
   const record: CheckoutSessionRecord = {
     clientId,
@@ -190,6 +228,11 @@ export async function handleCheckoutSession(
 
   try {
     await Promise.all(operations);
+    console.log('[checkout-session] stored session', {
+      clientId,
+      checkoutToken,
+      cartKey,
+    });
   } catch (error) {
     console.error("[checkout-session] failed to persist", error);
     return new Response("Failed to persist session", {

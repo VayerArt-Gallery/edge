@@ -108,6 +108,13 @@ export async function handleShopifyOrderWebhook(
     return new Response(null, { status: 204 });
   }
 
+  console.log('[shopify-webhook] matched checkout record', {
+    clientId: record.clientId,
+    checkoutToken,
+    cartToken,
+    source: checkoutToken ? 'checkout_token' : 'cart_token',
+  });
+
   const completedAt = new Date().toISOString();
   const updatedRecord: CheckoutSessionRecord = {
     ...record,
