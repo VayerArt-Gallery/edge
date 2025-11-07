@@ -49,6 +49,12 @@ export async function handleShopifyOrderWebhook(
   request: Request,
   env: Env,
 ): Promise<Response> {
+  const requestPath = new URL(request.url).pathname;
+  console.log('[shopify-webhook] incoming request', {
+    path: requestPath,
+    method: request.method,
+  });
+
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
@@ -61,7 +67,10 @@ export async function handleShopifyOrderWebhook(
   );
 
   if (!valid) {
-    console.warn("[shopify-webhook] invalid signature");
+    console.warn("[shopify-webhook] invalid signature", {
+      path: requestPath,
+      hmacHeaderPresent: Boolean(request.headers.get("x-shopify-hmac-sha256")),
+    });
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -72,6 +81,12 @@ export async function handleShopifyOrderWebhook(
     console.error("[shopify-webhook] invalid JSON payload", error);
     return new Response("Bad Request", { status: 400 });
   }
+
+  console.log('[shopify-webhook] received order webhook', {
+    path: requestPath,
+    hasCheckoutToken: Boolean(payload.checkout_token),
+    hasCartToken: Boolean(payload.cart_token),
+  });
 
   const checkoutToken = payload.checkout_token?.trim() ?? null;
   const cartToken = payload.cart_token?.trim() ?? null;
