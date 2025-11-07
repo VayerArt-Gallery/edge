@@ -12,14 +12,14 @@ interface CheckoutSessionRecord {
   clientId: string;
   cartId: string;
   cartKey: string | null;
+  cartToken: string | null;
   checkoutUrl: string;
-  checkoutToken: string | null;
   storedAt: string;
   status: "pending" | "completed";
   completedAt?: string;
 }
 
-function extractCheckoutToken(checkoutUrl: string): string | null {
+function extractCartToken(checkoutUrl: string): string | null {
   try {
     const url = new URL(checkoutUrl);
     const segments = url.pathname.split("/").filter(Boolean);
@@ -177,10 +177,10 @@ export async function handleCheckoutSession(
     });
   }
 
-  const checkoutToken = extractCheckoutToken(checkoutUrl);
+  const cartToken = extractCartToken(checkoutUrl);
   const cartKey = extractCartKey(cartId, checkoutUrl);
-  if (!checkoutToken) {
-    console.warn('[checkout-session] missing checkout token for url', checkoutUrl);
+  if (!cartToken) {
+    console.warn('[checkout-session] missing cart token for url', checkoutUrl);
   }
   if (!cartKey) {
     console.warn('[checkout-session] missing cart key for id', cartId);
@@ -190,8 +190,8 @@ export async function handleCheckoutSession(
     clientId,
     cartId,
     cartKey,
+    cartToken,
     checkoutUrl,
-    checkoutToken,
     storedAt,
     status: "pending",
   };
@@ -216,10 +216,10 @@ export async function handleCheckoutSession(
     );
   }
 
-  if (checkoutToken) {
+  if (cartToken) {
     operations.push(
       env.CART_KV_BINDING.put(
-        `checkout:token:${checkoutToken}`,
+        `checkout:cart-token:${cartToken}`,
         JSON.stringify(record),
         { expirationTtl: EXPIRATION_TTL_SECONDS },
       ),
@@ -230,7 +230,7 @@ export async function handleCheckoutSession(
     await Promise.all(operations);
     console.log('[checkout-session] stored session', {
       clientId,
-      checkoutToken,
+      cartToken,
       cartKey,
     });
   } catch (error) {

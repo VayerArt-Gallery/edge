@@ -98,17 +98,17 @@ export async function handleShopifyOrderWebhook(
 
   let record: CheckoutSessionRecord | null = null;
 
-  if (checkoutToken) {
+  if (cartToken) {
     const stored = await env.CART_KV_BINDING.get(
-      `checkout:token:${checkoutToken}`,
+      `checkout:cart-token:${cartToken}`,
       "json",
     );
     record = stored as CheckoutSessionRecord | null;
   }
 
-  if (!record && cartToken) {
+  if (!record && checkoutToken) {
     const stored = await env.CART_KV_BINDING.get(
-      `checkout:cart-key:${cartToken}`,
+      `checkout:token:${checkoutToken}`,
       "json",
     );
     record = stored as CheckoutSessionRecord | null;
@@ -139,9 +139,9 @@ export async function handleShopifyOrderWebhook(
 
   const ops: Promise<void>[] = [];
 
-  if (record.checkoutToken) {
+  if (record.cartToken) {
     ops.push(
-      env.CART_KV_BINDING.delete(`checkout:token:${record.checkoutToken}`),
+      env.CART_KV_BINDING.delete(`checkout:cart-token:${record.cartToken}`),
     );
   }
 
