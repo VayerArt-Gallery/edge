@@ -48,7 +48,7 @@ function extractCartToken(checkoutUrl: string): string | null {
       return tokenCandidate;
     }
 
-    console.warn('[checkout-session] no valid token segment detected', {
+    console.warn("[checkout-session] no valid token segment detected", {
       pathname: url.pathname,
       segments,
     });
@@ -59,7 +59,10 @@ function extractCartToken(checkoutUrl: string): string | null {
   return null;
 }
 
-function extractCartKey(cartId: string | null, checkoutUrl: string): string | null {
+function extractCartKey(
+  cartId: string | null,
+  checkoutUrl: string,
+): string | null {
   const sources = [cartId, checkoutUrl];
 
   for (const source of sources) {
@@ -67,18 +70,18 @@ function extractCartKey(cartId: string | null, checkoutUrl: string): string | nu
     const trimmed = source.trim();
     if (!trimmed) continue;
 
-    const queryIndex = trimmed.indexOf('?');
+    const queryIndex = trimmed.indexOf("?");
     if (queryIndex >= 0) {
       const search = trimmed.slice(queryIndex + 1);
       const params = new URLSearchParams(search);
-      const keyParam = params.get('key');
+      const keyParam = params.get("key");
       if (keyParam) return keyParam;
     }
   }
 
   if (cartId) {
-    const withoutQuery = cartId.split('?')[0] ?? cartId;
-    const parts = withoutQuery.split('/');
+    const withoutQuery = cartId.split("?")[0] ?? cartId;
+    const parts = withoutQuery.split("/");
     if (parts.length > 0) {
       return parts[parts.length - 1] ?? null;
     }
@@ -97,7 +100,10 @@ function allowedOriginsFor(envType: RuntimeEnv): readonly string[] {
   if (envType === "development") {
     return ["http://localhost:3000"] as const;
   }
-  return ["https://www.ag-gallery.com", "https://ag-gallery.com"] as const;
+  return [
+    "https://www.vayerartgallery.com",
+    "https://vayerartgallery.com",
+  ] as const;
 }
 
 function resolveAllowedOrigin(
@@ -180,10 +186,10 @@ export async function handleCheckoutSession(
   const cartToken = extractCartToken(checkoutUrl);
   const cartKey = extractCartKey(cartId, checkoutUrl);
   if (!cartToken) {
-    console.warn('[checkout-session] missing cart token for url', checkoutUrl);
+    console.warn("[checkout-session] missing cart token for url", checkoutUrl);
   }
   if (!cartKey) {
-    console.warn('[checkout-session] missing cart key for id', cartId);
+    console.warn("[checkout-session] missing cart key for id", cartId);
   }
   const storedAt = new Date().toISOString();
   const record: CheckoutSessionRecord = {
