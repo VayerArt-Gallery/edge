@@ -89,3 +89,49 @@ export async function runWithConcurrency(
   await Promise.all(workers);
 }
 
+export function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isRetryableError(error: unknown) {
+  const message = String(error ?? "");
+  return (
+    message.includes("Too Many Requests") ||
+    message.includes("429") ||
+    message.includes("in-flight requests") ||
+    message.includes("Rate limit") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("fetch failed")
+  );
+}
+
+export async function retryWithBackoff<T>(
+  task: () => Promise<T>,
+  options?: {
+    retries?: number;
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+    shouldRetry?: (error: unknown) => boolean;
+  },
+): Promise<T> {
+  const retries = options?.retries ?? 4;
+  const baseDelayMs = options?.baseDelayMs ?? 250;
+  const maxDelayMs = options?.maxDelayMs ?? 4_000;
+  const shouldRetry = options?.shouldRetry ?? isRetryableError;
+
+  let attempt = 0;
+  let lastError: unknown;
+  while (attempt <= retries) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !shouldRetry(error)) throw error;
+      const delay = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+      await sleep(delay);
+      attempt += 1;
+    }
+  }
+  throw lastError;
+}

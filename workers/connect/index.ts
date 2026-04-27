@@ -3,7 +3,10 @@ import type { ConnectPayload, ConnectProduct } from "../../types/connect";
 import { isProductDelete, isProductSync } from "../../types/connect";
 import { fetchProductMetafields } from "../../lib/shopify/metafields";
 import { getSanityClient } from "../../lib/sanity/client";
-import { commitUpsertsForProduct, markProductsDeleted } from "../../lib/sanity/persist";
+import {
+  commitUpsertsForProduct,
+  markProductsDeleted,
+} from "../../lib/sanity/persist";
 import {
   json,
   timingSafeEqual,
@@ -12,6 +15,7 @@ import {
   toSlug,
   numericId14FromString,
   runWithConcurrency,
+  retryWithBackoff,
 } from "../../lib/utils";
 
 /**
@@ -53,7 +57,8 @@ export async function handleConnectSync(
   let payload: ConnectPayload;
   try {
     const buf = await request.arrayBuffer();
-    if (!len && buf.byteLength > MAX) return json({ error: "Payload too large" }, 413);
+    if (!len && buf.byteLength > MAX)
+      return json({ error: "Payload too large" }, 413);
     const raw = new TextDecoder().decode(buf);
     payload = JSON.parse(raw) as ConnectPayload;
   } catch {
@@ -107,7 +112,8 @@ async function processSyncProducts(env: Env, prods: ConnectProduct[]) {
 
     // Pre-ensure unique artist documents to reduce redundant createIfNotExists writes.
     const ensuredArtistIds = new Set<string>();
-    const uniqueArtists: Array<{ _id: string; name: string; slug: string }> = [];
+    const uniqueArtists: Array<{ _id: string; name: string; slug: string }> =
+      [];
     for (const meta of metaById.values()) {
       const name = meta.artist?.trim();
       if (!name) continue;
@@ -130,7 +136,7 @@ async function processSyncProducts(env: Env, prods: ConnectProduct[]) {
         });
       }
       try {
-        await preTx.commit();
+        await retryWithBackoff(() => preTx.commit());
       } catch {
         // If this pre-ensure fails, the per-product upserts still create lazily.
         ensuredArtistIds.clear();
@@ -146,12 +152,16 @@ async function processSyncProducts(env: Env, prods: ConnectProduct[]) {
         try {
           await commitUpsertsForProduct(env, p, metaById, ensuredArtistIds);
         } catch (e) {
-          console.warn("commitUpsertsForProduct failed", { pid, err: String(e) });
+          console.warn("commitUpsertsForProduct failed", {
+            pid,
+            err: String(e),
+          });
         }
       });
     }
 
-    // Run up to 3 concurrent upserts to balance latency and resource limits.
-    await runWithConcurrency(tasks, 3);
+    // Full backfills can trigger Sanity in-flight limits across overlapping webhook requests.
+    // Keep per-request write pressure low and rely on retries for transient contention.
+    await runWithConcurrency(tasks, 1);
   }
 }
