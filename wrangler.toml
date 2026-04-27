@@ -8,7 +8,7 @@ SHOPIFY_API_VERSION = "2025-07"
 CACHE_TTL = "60"
 CACHE_SWR = "300"
 SANITY_PROJECT_ID = "fqlwsw1s"
-SANITY_DATASET = "production"
+SANITY_DATASET = "vayerart"
 
 # Map routes to the same worker
 routes = [
