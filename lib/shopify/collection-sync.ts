@@ -197,7 +197,19 @@ async function createCollection(
     }
 
     console.log(`Created ${config.label} collection: ${created.title}`);
-    await publishToSalesChannel(url, env, created.id, config.label);
+
+    try {
+      await publishToSalesChannel(url, env, created.id, config.label);
+    } catch (error) {
+      if (isMissingPublicationScopeError(error)) {
+        console.warn(
+          `Created ${config.label} collection '${created.title}', but skipped publishing because the Shopify token is missing publication scopes.`,
+        );
+        return;
+      }
+
+      throw error;
+    }
   } catch (error) {
     console.error(
       `Failed to create collection for ${config.label} ${entry.title}:`,
@@ -456,6 +468,18 @@ async function publishToSalesChannel(
       userErrors,
     );
   }
+}
+
+function isMissingPublicationScopeError(error: unknown): boolean {
+  const message = String(error ?? "");
+
+  return (
+    message.includes("ACCESS_DENIED") &&
+    (message.includes("read_publications") ||
+      message.includes("write_publications") ||
+      message.includes("publications field") ||
+      message.includes("publishablePublish"))
+  );
 }
 
 function buildGraphqlUrl(env: Env): string {
